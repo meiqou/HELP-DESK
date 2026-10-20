@@ -1,0 +1,4 @@
+# Secret keys are generated per installation and must never be committed
+config/secrets.php
+*.log
+tests/last-run.json

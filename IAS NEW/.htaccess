@@ -1,0 +1,25 @@
+# ---------------------------------------------------------------------------
+# Project root: nothing here is meant to be reached from the browser.
+# Requests are routed into public/, the only web-accessible folder, so src/,
+# config/, views/, database/, setup/ and tests/ can never be downloaded.
+# (Best practice: point the Apache DocumentRoot straight at public/.)
+# ---------------------------------------------------------------------------
+
+Options -Indexes -MultiViews
+
+<IfModule mod_rewrite.c>
+    RewriteEngine On
+    RewriteRule ^$ public/ [L]
+    RewriteCond %{REQUEST_URI} !/public/
+    RewriteRule ^(.*)$ public/$1 [L]
+</IfModule>
+
+# Fallback if mod_rewrite is unavailable: block everything except the redirect stub.
+<IfModule !mod_rewrite.c>
+    <FilesMatch ".*">
+        Require all denied
+    </FilesMatch>
+    <Files "index.php">
+        Require all granted
+    </Files>
+</IfModule>
