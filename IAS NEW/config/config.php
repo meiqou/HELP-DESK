@@ -19,7 +19,7 @@ return [
 
     'db' => [
         'host'    => $env('DB_HOST', 'localhost'),
-        'port'    => $env('DB_PORT', '3306'),
+        'port'    => $env('DB_PORT', '3307'),
         'name'    => $env('DB_NAME', 'usls_helpdesk'),
         'user'    => $env('DB_USER', 'root'),
         'pass'    => $env('DB_PASS', ''),
