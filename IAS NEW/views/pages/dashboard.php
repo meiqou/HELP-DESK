@@ -1,7 +1,7 @@
 <div class="page-header">
     <div>
         <p class="welcome-date"><?= e(date('l, F j, Y')) ?></p>
-        <h1><?= e(greeting()) ?>, <?= e($user['username']) ?></h1>
+        <h1><?= e(greeting()) ?>, <?= e(given_name($user)) ?></h1>
         <p class="muted">Here is an overview of your support requests.</p>
     </div>
     <a href="my_tickets.php" class="btn btn-secondary"><?= icon('list') ?> View all tickets</a>

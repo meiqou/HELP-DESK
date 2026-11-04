@@ -17,9 +17,27 @@ use PDOException;
 final class Registration
 {
     /**
+     * Letters from any language, plus spaces, dots, apostrophes and dashes (e.g. "Ma. Jose-Ñiño").
+     *
+     * @return string[] validation errors
+     */
+    public static function nameErrors(string $firstName, string $lastName): array
+    {
+        $errors = [];
+        $valid = "/^\\p{L}[\\p{L}\\p{M} .'\\-]{0,99}$/u";
+        if (!preg_match($valid, $firstName)) {
+            $errors[] = 'Enter your first name using letters only.';
+        }
+        if (!preg_match($valid, $lastName)) {
+            $errors[] = 'Enter your last name using letters only.';
+        }
+        return $errors;
+    }
+
+    /**
      * @return string[] validation errors; an empty array means the account was created
      */
-    public static function register(string $username, string $email, string $password, string $confirm): array
+    public static function register(string $firstName, string $lastName, string $username, string $email, string $password, string $confirm): array
     {
         $s = Config::get('security');
 
@@ -28,7 +46,7 @@ final class Registration
             return ['Too many accounts have been created from this network. Please try again later.'];
         }
 
-        $errors = [];
+        $errors = self::nameErrors($firstName, $lastName);
         if (!preg_match('/^[A-Za-z0-9._-]{3,30}$/', $username)) {
             $errors[] = 'Username must be 3 to 30 characters using letters, numbers, dots, dashes or underscores.';
         }
@@ -40,13 +58,13 @@ final class Registration
         if (!hash_equals($password, $confirm)) {
             $errors[] = 'Passwords do not match.';
         }
-        $errors = array_merge($errors, PasswordPolicy::errors($password, $username, $email));
+        $errors = array_merge($errors, PasswordPolicy::errors($password, $username, $email, [$firstName, $lastName]));
         if ($errors) {
             return array_values(array_unique($errors));
         }
 
         try {
-            $id = UserRepository::create($username, $email, PasswordHasher::hash($password), 'user');
+            $id = UserRepository::create($username, $email, PasswordHasher::hash($password), 'user', $firstName, $lastName);
         } catch (PDOException $e) {
             if ($e->getCode() === '23000') {   // unique key: username or e-mail already used
                 RateLimiter::record('register', $username, false);

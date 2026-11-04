@@ -5,7 +5,7 @@
 
 A helpdesk portal for the University of St. La Salle where students, faculty and staff file IT support
 tickets, IT technicians resolve them, and administrators manage accounts. Security is built into every request,
-and an automated test suite of 149 checks proves that every control works.
+and an automated test suite of 178 checks proves that every control works.
 
 ---
 
@@ -15,13 +15,15 @@ and an automated test suite of 149 checks proves that every control works.
 2. Start **Apache** and **MySQL** in the XAMPP Control Panel.
 3. Open phpMyAdmin, choose **Import**, select `database/schema.sql` and press **Go**.
    This creates the `secure_system` database. If you already have the database from the old version,
-   the script upgrades the tables in place without deleting any data.
+   the script upgrades the tables in place without deleting any data. Import it again after updating the
+   project, because new versions can add columns.
 4. Create the first administrator from a terminal (the script refuses to run in a browser):
    ```
    cd C:\xampp\htdocs\helpdesk
    C:\xampp\php\php.exe setup\create_admin.php
    ```
-5. Visit `http://localhost/helpdesk/` and sign in.
+5. Visit `http://localhost/helpdesk/` and sign in. Every account, including the administrator, must link an
+   authenticator app at its first sign-in, so have Google or Microsoft Authenticator ready on a phone.
 
 Only the `public/` folder is served. The `.htaccess` in the project root routes every request into it, so
 the source code, configuration and secret keys can never be downloaded. On a production server, point the
@@ -43,7 +45,7 @@ C:\xampp\php\php.exe tests\run.php
 ```
 
 The suite creates its own throwaway database (`secure_system_test`), starts its own web server, and runs
-149 checks: unit tests of the security classes plus end-to-end attacks over real HTTP (CSRF, SQL injection,
+178 checks: unit tests of the security classes plus end-to-end attacks over real HTTP (CSRF, SQL injection,
 XSS, IDOR, session fixation, session hijacking, brute force, password spraying, replayed 2FA codes, parallel
 2FA guessing, timing-based user enumeration, hostile input, open redirects, log tampering and more). It prints PASS or FAIL for each check and exits with an error code if
 anything fails. Your real database is never touched. The latest results are saved to `tests/last-run.json`.
@@ -84,15 +86,15 @@ each security class can be tested on its own.
 | Argon2id hashing | Memory-hard algorithm (64 MB, 4 iterations) with a random salt per password. Falls back to bcrypt cost 12 if Argon2id is unavailable. | `Security/PasswordHasher` |
 | Pepper | Before hashing, the password is combined with a secret key using HMAC-SHA256. The key is stored outside the database, so a stolen database alone cannot be cracked offline. | `PasswordHasher::pepper()` |
 | Automatic rehash | Hashes from the old version of the system are accepted once and upgraded on the next sign-in. | `PasswordHasher::verify()` |
-| Password policy | 12 to 128 characters, upper and lower case, a number and a symbol, no long repeats, not a common password, and not containing the username or e-mail name. Enforced on the server; the strength meter is only a hint. | `Security/PasswordPolicy` |
+| Password policy | 12 to 128 characters, upper and lower case, a number and a symbol, no long repeats, not a common password, and not containing the name, username or e-mail name. Enforced on the server; the form shows the common-password rule and a live checklist before the account is created. | `Security/PasswordPolicy` |
 | Timing-safe checks | When a username does not exist, a dummy hash is still verified, so response time does not reveal which accounts exist. | `PasswordHasher::dummyVerify()` |
 
 ### B. Authentication
 
 | Control | How it works |
 |---|---|
-| Brute-force lockout | 5 failed attempts per account, or 50 per IP address (generous because a campus shares one public IP), within 15 minutes locks sign-in. It works the same for usernames that do not exist, and a wrong password and an unknown username take the same time to answer (no account enumeration). |
-| Two-factor authentication (TOTP) | Optional 6-digit codes from Google or Microsoft Authenticator (RFC 6238, verified against the official test vectors). The secret is encrypted with AES-256-GCM; a code can never be used twice, even by two requests at the same moment. The lockout is checked before every code, so opening many sign-in sessions gives no extra guesses. Setting up 2FA requires the password, and an existing setup cannot be silently replaced. |
+| Attempts left and cooldown | Each failed sign-in shows how many attempts remain. 5 failed attempts per account, or 50 per IP address (generous because a campus shares one public IP), start a 15-minute cooldown with a live countdown. It works the same for usernames that do not exist, and a wrong password and an unknown username take the same time to answer (no account enumeration). |
+| Required two-factor authentication (TOTP) | Every account must link an authenticator app before it can reach anything; until then it stays fully signed out. 6-digit codes from Google or Microsoft Authenticator (RFC 6238, verified against the official test vectors). The secret is encrypted with AES-256-GCM; a code can never be used twice, even by two requests at the same moment. The lockout is checked before every code, so opening many sign-in sessions gives no extra guesses. Moving to a new device requires the password and a current code, then signs the user out to link the new one. |
 | Recovery codes | 8 single-use codes, stored hashed like passwords, shown only once. |
 | Session fixation defence | The session ID is replaced on sign-in, on 2FA completion and every 10 minutes; IDs the server did not create are refused. |
 | Hardened cookies | `HttpOnly`, `SameSite=Strict`, `Secure` on HTTPS, never placed in URLs. |
@@ -121,6 +123,7 @@ each security class can be tested on its own.
 
 ### D. Other web-security controls
 
+- **Copy and paste blocked on password fields:** passwords cannot be copied, cut, pasted or dragged, even while shown. This is a browser-side convenience control; the block does not target password-manager autofill, but that has not been tested.
 - **SQL injection:** prepared statements everywhere with emulation disabled; filter values are whitelisted.
 - **XSS:** all output passes through `e()`; a strict **Content-Security-Policy** blocks inline and third-party scripts.
 - **CSRF:** a random token is required on every POST form and compared in constant time.
@@ -136,11 +139,11 @@ each security class can be tested on its own.
 
 ## 5. Suggested demo for the presentation
 
-1. Run `php tests\run.php` and show 149 of 149 checks passing.
+1. Run `php tests\run.php` and show 178 of 178 checks passing.
 2. Register with `password123`: the policy rejects it. Register with a strong password: the meter turns green.
-3. Enter a wrong password 5 times: the account locks. Try a non-existent username: same message.
+3. Enter a wrong password and watch the attempts-left count; on the fifth, the cooldown timer starts. A non-existent username behaves the same.
 4. In phpMyAdmin, show the `users.password` column: `$argon2id$...` hashes, no plain text.
-5. Account, Security settings: set up two-factor with Google Authenticator, then sign out and back in with the code.
+5. Sign in with a new account: the required two-factor setup appears before anything else. Link Google Authenticator, then sign out and back in with a code.
 6. As a student, open `admin_tickets.php` directly: **403 Access denied**, then show it in the audit log.
 7. As admin, change a student to technician while they are signed in: their next click signs them out.
 8. Submit a ticket with `<script>alert(1)</script>` as the subject: it is displayed as text, not executed.
@@ -173,6 +176,7 @@ IAS NEW/
 ├── public/                    Web root (the only folder the browser can reach)
 │   ├── index.php              Landing page
 │   ├── login.php              Sign in
+│   ├── setup_2fa.php          Required two-factor setup at first sign-in
 │   ├── verify_2fa.php         Second factor (authenticator code or recovery code)
 │   ├── register.php           Account creation
 │   ├── logout.php             POST-only sign out

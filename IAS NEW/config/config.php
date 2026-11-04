@@ -35,12 +35,18 @@ return [
         'max_login_failures_per_account' => 5,
         // Per network address. Kept generous because a whole campus can share one public IP (NAT).
         'max_login_failures_per_ip'      => (int) $env('MAX_LOGIN_FAILURES_PER_IP', 50),
-        'lockout_window'                 => 15 * 60,
+        'lockout_window'                 => (int) $env('LOCKOUT_WINDOW', 15 * 60),   // the sign-in cooldown, in seconds
         'max_registrations_per_ip'       => (int) $env('MAX_REGISTRATIONS_PER_IP', 5),
         'registration_window'            => 3600,
 
         // Step-up authentication for sensitive admin pages
         'reauth_window' => (int) $env('REAUTH_WINDOW', 10 * 60),
+
+        // Every account must use an authenticator app. New and existing users link one at their next sign-in.
+        'require_two_factor' => (bool) (int) $env('REQUIRE_TWO_FACTOR', 1),
+
+        // Time allowed to finish linking an authenticator app during sign-in
+        'enrolment_timeout' => 15 * 60,
 
         // The second sign-in step must be completed within this many seconds
         'two_factor_timeout' => 5 * 60,

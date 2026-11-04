@@ -15,7 +15,7 @@ if ($layout === 'app') {
     $layout = ($navUser && empty($publicPage)) ? 'shell' : 'public';
 }
 $flashes = App\Core\Session::takeFlashes();
-$initial = $navUser ? strtoupper(substr($navUser['username'], 0, 1)) : '';
+$initial = $navUser ? mb_strtoupper(mb_substr(given_name($navUser), 0, 1)) : '';
 
 $navGroups = [];
 if ($navUser) {
@@ -74,7 +74,7 @@ if ($navUser) {
             <div class="sidebar-user">
                 <span class="avatar avatar-lg" aria-hidden="true"><?= e($initial) ?></span>
                 <span class="sidebar-user-text">
-                    <strong><?= e($navUser['username']) ?></strong>
+                    <strong><?= e(display_name($navUser)) ?></strong>
                     <small><?= e(App\Auth\Rbac::label($navUser['role'])) ?></small>
                 </span>
             </div>

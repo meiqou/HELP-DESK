@@ -10,18 +10,20 @@ use App\Core\Config;
  */
 final class PasswordPolicy
 {
-    private const COMMON = [
+    public const COMMON = [
         'password', 'password1', 'password123', '123456', '12345678', '123456789', '1234567890',
         'qwerty', 'qwerty123', 'abc123', 'letmein', 'welcome', 'welcome1', 'admin', 'admin123',
         'iloveyou', 'monkey', 'dragon', 'football', 'baseball', 'sunshine', 'princess', 'master',
         'shadow', 'trustno1', 'superman', 'passw0rd', 'p@ssw0rd', 'p@ssword', 'changeme',
         'lasalle', 'usls', 'uslsbacolod', 'stlasalle', 'animo', 'animolasalle', 'bacolod', 'student',
+        'qwertyuiop', 'asdfghjkl', 'zxcvbnm', '111111', '000000', '654321', '1q2w3e4r', '1qaz2wsx',
+        'admin1234', 'administrator', 'helpdesk', 'computer', 'internet', 'secret', 'login',
     ];
 
     /**
      * @return string[] human-readable problems; empty when the password is acceptable
      */
-    public static function errors(string $password, string $username = '', string $email = ''): array
+    public static function errors(string $password, string $username = '', string $email = '', array $names = []): array
     {
         $min = (int) Config::get('security.password_min_length');
         $max = (int) Config::get('security.password_max_length');
@@ -58,6 +60,12 @@ final class PasswordPolicy
 
         if (strlen($username) >= 3 && str_contains($lower, strtolower($username))) {
             $errors[] = 'Do not include your username in your password.';
+        }
+        foreach ($names as $name) {
+            if (mb_strlen($name) >= 3 && str_contains(mb_strtolower($password), mb_strtolower($name))) {
+                $errors[] = 'Do not include your name in your password.';
+                break;
+            }
         }
         $local = strtolower(strstr($email, '@', true) ?: '');
         if (strlen($local) >= 3 && str_contains($lower, $local)) {

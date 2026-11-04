@@ -4,6 +4,11 @@
 <?php if ($error): ?>
     <div class="alert alert-error" role="alert"><?= e($error) ?></div>
 <?php endif; ?>
+<?php if ($cooldown > 0): ?>
+    <div class="alert alert-error" role="alert" data-cooldown="<?= (int) $cooldown ?>" data-cooldown-done="The cooldown has ended. You can try again now.">
+        Too many failed sign-in attempts. Please try again in <strong data-cooldown-time><?= e(format_countdown($cooldown)) ?></strong>.
+    </div>
+<?php endif; ?>
 
 <form method="POST" class="form-stack" autocomplete="on" novalidate>
     <?= csrf_field() ?>

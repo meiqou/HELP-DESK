@@ -1049,3 +1049,9 @@ details.disclosure summary { cursor: pointer; font-size: 13px; color: var(--gree
     .hp-preview { grid-template-columns: 1fr; }
     .hp-preview-main { padding: 20px; }
 }
+
+/* Disabled buttons look disabled (for example during the sign-in cooldown). */
+.btn:disabled { opacity: 0.55; cursor: not-allowed; }
+
+/* Edge's built-in reveal icon would duplicate the Show button. */
+input::-ms-reveal, input::-ms-clear { display: none; }

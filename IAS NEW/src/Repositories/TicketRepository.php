@@ -126,9 +126,9 @@ final class TicketRepository
             $params[] = $filters['assignee'];
         }
         if ($filters['q'] !== '') {
-            $where[] = '(t.subject LIKE ? OR t.description LIKE ? OR u.username LIKE ? OR t.category LIKE ?)';
+            $where[] = "(t.subject LIKE ? OR t.description LIKE ? OR u.username LIKE ? OR t.category LIKE ? OR CONCAT(u.first_name, ' ', u.last_name) LIKE ?)";
             $like = '%' . addcslashes($filters['q'], '%_\\') . '%';
-            array_push($params, $like, $like, $like, $like);
+            array_push($params, $like, $like, $like, $like, $like);
         }
         $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
@@ -138,7 +138,7 @@ final class TicketRepository
 
         $offset = max(0, ($page - 1) * $perPage);
         $stmt = self::db()->prepare(
-            "SELECT t.*, u.username, a.username AS assignee
+            "SELECT t.*, u.username, u.first_name, u.last_name, a.username AS assignee
              FROM tickets t
              JOIN users u ON u.id = t.user_id
              LEFT JOIN users a ON a.id = t.assigned_to

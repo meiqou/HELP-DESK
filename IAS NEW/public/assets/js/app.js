@@ -39,6 +39,43 @@
         }
     });
 
+    // Passwords cannot be copied, cut, pasted or dragged (also while shown as text).
+    document.querySelectorAll('input[type="password"]').forEach(function (input) {
+        ['copy', 'cut', 'paste', 'drop', 'dragstart'].forEach(function (type) {
+            input.addEventListener(type, function (event) {
+                event.preventDefault();
+                var note = input.parentNode.querySelector('.clipboard-note');
+                if (!note) {
+                    note = document.createElement('p');
+                    note.className = 'hint clipboard-note';
+                    note.setAttribute('role', 'status');
+                    note.textContent = 'For security, copy and paste is turned off for passwords. Please type it.';
+                    (input.closest('.password-wrap') || input).insertAdjacentElement('afterend', note);
+                }
+            });
+        });
+    });
+
+    // Sign-in cooldown: a live countdown; the sign-in button stays off until it ends.
+    // The server enforces the cooldown regardless of what happens here.
+    document.querySelectorAll('[data-cooldown]').forEach(function (box) {
+        var left = parseInt(box.getAttribute('data-cooldown'), 10);
+        var time = box.querySelector('[data-cooldown-time]');
+        var submit = document.querySelector('form.form-stack button[type="submit"]');
+        if (submit) submit.disabled = true;
+        var timer = setInterval(function () {
+            left--;
+            if (left > 0) {
+                time.textContent = Math.floor(left / 60) + ':' + String(left % 60).padStart(2, '0');
+                return;
+            }
+            clearInterval(timer);
+            box.textContent = box.getAttribute('data-cooldown-done');
+            box.className = 'alert alert-info';
+            if (submit) submit.disabled = false;
+        }, 1000);
+    });
+
     // Show / hide password
     document.querySelectorAll('.password-toggle').forEach(function (button) {
         button.addEventListener('click', function () {
@@ -64,6 +101,15 @@
             number: function (v) { return /\d/.test(v); },
             symbol: function (v) { return /[^a-zA-Z\d]/.test(v); }
         };
+        // The same list the server checks (PasswordPolicy::COMMON).
+        var common = JSON.parse(input.getAttribute('data-common') || 'null');
+        if (common) {
+            rules.common = function (v) {
+                var lower = v.toLowerCase();
+                return v.length > 0 && common.indexOf(lower) === -1 && common.indexOf(lower.replace(/[^a-z]/g, '')) === -1;
+            };
+        }
+        var ruleCount = Object.keys(rules).length;
         var names = ['Too weak', 'Weak', 'Fair', 'Strong', 'Very strong'];
 
         input.addEventListener('input', function () {
@@ -77,10 +123,10 @@
             });
             // Same rules as the server (PasswordPolicy): every rule must pass and no
             // character may repeat four or more times. Only then does length add strength.
-            var passes = met === 5 && !/(.)\1{3,}/.test(v);
+            var passes = met === ruleCount && !/(.)\1{3,}/.test(v);
             var score;
             if (!passes) {
-                score = met >= 4 ? 1 : 0;                       // Too weak / Weak
+                score = met >= ruleCount - 1 ? 1 : 0;           // Too weak / Weak
             } else {
                 score = v.length >= min + 4 ? 4 : (v.length >= min + 2 ? 3 : 2);   // Fair / Strong / Very strong
             }

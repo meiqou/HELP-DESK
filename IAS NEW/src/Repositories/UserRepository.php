@@ -43,10 +43,10 @@ final class UserRepository
         return $stmt->fetch() ?: null;
     }
 
-    public static function create(string $username, string $email, string $passwordHash, string $role = 'user'): int
+    public static function create(string $username, string $email, string $passwordHash, string $role = 'user', string $firstName = '', string $lastName = ''): int
     {
-        self::db()->prepare('INSERT INTO users (username, email, password, role, password_changed_at) VALUES (?, ?, ?, ?, NOW())')
-            ->execute([$username, $email, $passwordHash, $role]);
+        self::db()->prepare('INSERT INTO users (username, first_name, last_name, email, password, role, password_changed_at) VALUES (?, ?, ?, ?, ?, ?, NOW())')
+            ->execute([$username, $firstName, $lastName, $email, $passwordHash, $role]);
         return (int) self::db()->lastInsertId();
     }
 
@@ -96,10 +96,19 @@ final class UserRepository
         self::db()->prepare('DELETE FROM users WHERE id = ?')->execute([$id]);
     }
 
-    public static function enableTotp(int $id, string $encryptedSecret, int $step): void
+    public static function updateName(int $id, string $firstName, string $lastName): void
     {
-        self::db()->prepare('UPDATE users SET totp_secret = ?, totp_enabled = 1, totp_last_step = ? WHERE id = ?')
-            ->execute([$encryptedSecret, $step, $id]);
+        self::db()->prepare('UPDATE users SET first_name = ?, last_name = ? WHERE id = ?')->execute([$firstName, $lastName, $id]);
+    }
+
+    /**
+     * Turns two-factor on only if it is still off, so two simultaneous setups cannot overwrite each other.
+     */
+    public static function enableTotp(int $id, string $encryptedSecret, int $step): bool
+    {
+        $stmt = self::db()->prepare('UPDATE users SET totp_secret = ?, totp_enabled = 1, totp_last_step = ? WHERE id = ? AND totp_enabled = 0');
+        $stmt->execute([$encryptedSecret, $step, $id]);
+        return $stmt->rowCount() === 1;
     }
 
     public static function disableTotp(int $id, bool $signOutEverywhere = false): void
@@ -130,7 +139,7 @@ final class UserRepository
     public static function allWithTicketCounts(): array
     {
         return self::db()->query(
-            "SELECT u.id, u.username, u.email, u.role, u.is_active, u.totp_enabled, u.created_at, u.last_login_at,
+            "SELECT u.id, u.username, u.first_name, u.last_name, u.email, u.role, u.is_active, u.totp_enabled, u.created_at, u.last_login_at,
                     (SELECT COUNT(*) FROM tickets t WHERE t.user_id = u.id) AS ticket_count
              FROM users u
              ORDER BY u.role = 'admin' DESC, u.role = 'technician' DESC, u.username"

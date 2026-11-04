@@ -65,7 +65,8 @@
                                 </details>
                             </td>
                             <td>
-                                <p class="cell-title"><?= e($t['username']) ?></p>
+                                <p class="cell-title"><?= e(display_name($t)) ?></p>
+                                <p class="cell-sub">@<?= e($t['username']) ?></p>
                                 <p class="cell-sub nowrap"><?= e(format_date($t['created_at'])) ?></p>
                                 <p class="cell-sub">
                                     <?php if ($t['assignee']): ?>

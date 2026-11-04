@@ -34,7 +34,7 @@
                     <label for="new_password">New password</label>
                     <div class="password-wrap">
                         <input class="input" type="password" id="new_password" name="new_password" autocomplete="new-password"
-                               minlength="<?= (int) $sec['password_min_length'] ?>" maxlength="<?= (int) $sec['password_max_length'] ?>" required data-strength data-min="<?= (int) $sec['password_min_length'] ?>">
+                               minlength="<?= (int) $sec['password_min_length'] ?>" maxlength="<?= (int) $sec['password_max_length'] ?>" required data-strength data-min="<?= (int) $sec['password_min_length'] ?>" data-common="<?= e(json_encode(App\Security\PasswordPolicy::COMMON)) ?>">
                         <button type="button" class="password-toggle" data-target="new_password" aria-pressed="false">Show</button>
                     </div>
                     <div class="meter" aria-live="polite">
@@ -47,7 +47,9 @@
                         <li data-rule="lower">Lowercase letter</li>
                         <li data-rule="number">Number</li>
                         <li data-rule="symbol">Symbol</li>
+                        <li data-rule="common">Not a common password</li>
                     </ul>
+                    <p class="hint">Common passwords such as password123, qwerty123 and admin123 are not allowed. Type your password; copy and paste is turned off.</p>
                 </div>
                 <div class="field">
                     <label for="confirm_password">Confirm new password</label>
@@ -64,7 +66,7 @@
                     <h2>Two-factor authentication</h2>
                     <span class="badge <?= $totpEnabled ? 'badge-on' : 'badge-off' ?>"><?= $totpEnabled ? 'On' : 'Off' ?></span>
                 </div>
-                <p class="muted small">Require a 6-digit code from an authenticator app (Google Authenticator, Microsoft Authenticator, Authy) in addition to your password.</p>
+                <p class="muted small"><?= $twoFactorRequired ? 'Required for every account.' : 'Optional.' ?> A 6-digit code from an authenticator app (Google Authenticator, Microsoft Authenticator, Authy) is needed in addition to your password.</p>
             </div>
             <?= $section === '2fa' ? form_errors($errors) : '' ?>
 
@@ -93,14 +95,18 @@
                         </div>
                         <button type="submit" class="btn btn-secondary">Generate new recovery codes</button>
                     </form>
-                    <form method="POST" class="form-stack" data-confirm="Turn off two-factor authentication?">
+                    <form method="POST" class="form-stack" data-confirm="<?= $twoFactorRequired ? 'Remove your current device? You will be signed out and must link a new one.' : 'Turn off two-factor authentication?' ?>">
                         <?= csrf_field() ?>
                         <input type="hidden" name="action" value="2fa_disable">
                         <div class="field">
                             <label for="pw_disable">Password</label>
                             <input class="input" type="password" id="pw_disable" name="current_password" autocomplete="current-password" required>
                         </div>
-                        <button type="submit" class="btn btn-danger">Turn off two-factor</button>
+                        <div class="field">
+                            <label for="code_disable">Authenticator or recovery code</label>
+                            <input class="input" type="text" id="code_disable" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="13" required>
+                        </div>
+                        <button type="submit" class="btn btn-danger"><?= $twoFactorRequired ? 'Move to a new device' : 'Turn off two-factor' ?></button>
                     </form>
                 </div>
             <?php elseif ($pendingSecret): ?>
@@ -165,11 +171,26 @@
         <section class="card">
             <h2>Profile</h2>
             <ul class="list-plain mt-2">
+                <li><span class="muted">Name</span><span><?= e(display_name($user)) ?></span></li>
                 <li><span class="muted">Username</span><span><?= e($user['username']) ?></span></li>
                 <li><span class="muted">E-mail</span><span><?= e($user['email']) ?></span></li>
                 <li><span class="muted">Role</span><span class="badge <?= e(badge_class($user['role'])) ?>"><?= e(App\Auth\Rbac::label($user['role'])) ?></span></li>
                 <li><span class="muted">Member since</span><span><?= e(date('M j, Y', strtotime($user['created_at']))) ?></span></li>
             </ul>
+            <?= $section === 'profile' ? form_errors($errors) : '' ?>
+            <form method="POST" class="form-stack mt-2">
+                <?= csrf_field() ?>
+                <input type="hidden" name="action" value="update_profile">
+                <div class="field">
+                    <label for="first_name">First name</label>
+                    <input class="input" type="text" id="first_name" name="first_name" value="<?= e($user['first_name']) ?>" autocomplete="given-name" maxlength="100" required>
+                </div>
+                <div class="field">
+                    <label for="last_name">Last name</label>
+                    <input class="input" type="text" id="last_name" name="last_name" value="<?= e($user['last_name']) ?>" autocomplete="family-name" maxlength="100" required>
+                </div>
+                <button type="submit" class="btn btn-secondary btn-sm">Save name</button>
+            </form>
         </section>
         <section class="card">
             <h2>Recent activity</h2>

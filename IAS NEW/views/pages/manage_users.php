@@ -33,10 +33,10 @@
                     $self = (int) $u['id'] === (int) $admin['id'];
                     $locked = $u['locked'];
                 ?>
-                    <tr class="user-row" data-search="<?= e($u['username'] . ' ' . $u['email'] . ' ' . App\Auth\Rbac::label($u['role']) . ' ' . ($u['is_active'] ? 'active' : 'deactivated')) ?>">
+                    <tr class="user-row" data-search="<?= e(display_name($u) . ' ' . $u['username'] . ' ' . $u['email'] . ' ' . App\Auth\Rbac::label($u['role']) . ' ' . ($u['is_active'] ? 'active' : 'deactivated')) ?>">
                         <td>
-                            <p class="cell-title"><?= e($u['username']) ?><?= $self ? ' <span class="muted small">(you)</span>' : '' ?></p>
-                            <p class="cell-sub"><?= e($u['email']) ?></p>
+                            <p class="cell-title"><?= e(display_name($u)) ?><?= $self ? ' <span class="muted small">(you)</span>' : '' ?></p>
+                            <p class="cell-sub">@<?= e($u['username']) ?> &middot; <?= e($u['email']) ?></p>
                         </td>
                         <td>
                             <?php if ($self): ?>

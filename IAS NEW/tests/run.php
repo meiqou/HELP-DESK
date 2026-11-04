@@ -23,6 +23,7 @@ const TEST_DB = 'secure_system_test';
 const IDLE_TIMEOUT = 15;    // seconds, so the idle-timeout test runs quickly
 const REAUTH_WINDOW = 10;   // seconds, so the step-up test runs quickly
 const MAX_REGISTRATIONS = 6;
+const SHORT_COOLDOWN = 6;   // seconds, so the cooldown-expiry test runs quickly
 
 $root = dirname(__DIR__);
 require __DIR__ . '/lib/TestRunner.php';
@@ -75,10 +76,14 @@ $serverEnv = array_merge(getenv(), [
     'SESSION_IDLE_TIMEOUT'    => (string) IDLE_TIMEOUT,
     'REAUTH_WINDOW'           => (string) REAUTH_WINDOW,
     'MAX_REGISTRATIONS_PER_IP' => (string) MAX_REGISTRATIONS,
+    'REQUIRE_TWO_FACTOR'      => '0',
 ]);
 $server = proc_open([PHP_BINARY, '-S', "127.0.0.1:$port", '-t', "$root/public"], [1 => ['file', 'NUL', 'w'], 2 => ['file', 'NUL', 'w']], $pipes, $root, $serverEnv);
-register_shutdown_function(static function () use ($server) {
+$strictEnv = array_merge(getenv(), ['DB_NAME' => TEST_DB, 'DB_HOST' => $dbHost, 'DB_PORT' => $dbPort, 'LOCKOUT_WINDOW' => (string) SHORT_COOLDOWN]);
+$strictServer = proc_open([PHP_BINARY, '-S', '127.0.0.1:8766', '-t', "$root/public"], [1 => ['file', 'NUL', 'w'], 2 => ['file', 'NUL', 'w']], $strictPipes, $root, $strictEnv);
+register_shutdown_function(static function () use ($server, $strictServer) {
     proc_terminate($server);
+    proc_terminate($strictServer);
 });
 $base = "http://127.0.0.1:$port/";
 for ($i = 0; $i < 50 && @file_get_contents($base . 'login.php') === false; $i++) {
@@ -183,19 +188,19 @@ foreach (['../src/bootstrap.php', '../config/secrets.php', 'config/secrets.php',
 
 $t->section('Registration');
 $c = $client();
-$r = $c->submit('register.php', ['username' => 'student1', 'email' => 'student1@usls.edu.ph', 'password' => 'password123', 'password_confirm' => 'password123']);
+$r = $c->submit('register.php', ['first_name' => 'Test', 'last_name' => 'Person', 'username' => 'student1', 'email' => 'student1@usls.edu.ph', 'password' => 'password123', 'password_confirm' => 'password123']);
 $t->check('Weak password is rejected on the server', $r->status === 200 && str_contains($r->body, 'This password is too common'));
-$r = $c->submit('register.php', ['username' => 'student1', 'email' => 'student1@usls.edu.ph', 'password' => $pw['student'], 'password_confirm' => 'Different#Pass2026']);
+$r = $c->submit('register.php', ['first_name' => 'Test', 'last_name' => 'Person', 'username' => 'student1', 'email' => 'student1@usls.edu.ph', 'password' => $pw['student'], 'password_confirm' => 'Different#Pass2026']);
 $t->check('Mismatched confirmation is rejected', str_contains($r->body, 'Passwords do not match'));
-$r = $c->submit('register.php', ['username' => '<b>x</b>', 'email' => 'not-an-email', 'password' => $pw['student'], 'password_confirm' => $pw['student']]);
+$r = $c->submit('register.php', ['first_name' => 'Test', 'last_name' => 'Person', 'username' => '<b>x</b>', 'email' => 'not-an-email', 'password' => $pw['student'], 'password_confirm' => $pw['student']]);
 $t->check('Invalid username and e-mail are rejected', str_contains($r->body, 'Username must be') && str_contains($r->body, 'valid e-mail'));
-$r = $c->submit('register.php', ['username' => 'student1', 'email' => 'student1@usls.edu.ph', 'password' => $pw['student'], 'password_confirm' => $pw['student'], 'role' => 'admin']);
+$r = $c->submit('register.php', ['first_name' => 'Test', 'last_name' => 'Person', 'username' => 'student1', 'email' => 'student1@usls.edu.ph', 'password' => $pw['student'], 'password_confirm' => $pw['student'], 'role' => 'admin']);
 $t->check('Strong password creates the account', $r->status === 302 && str_ends_with($r->location, 'login.php'));
 $new = UserRepository::findByLogin('student1');
 $ids['student'] = (int) ($new['id'] ?? 0);
 $t->check('A forged "role=admin" field is ignored (new accounts are always students)', ($new['role'] ?? '') === 'user');
 $t->check('Stored password is an Argon2id hash', str_starts_with($new['password'] ?? '', '$argon2id$'));
-$r = $c->submit('register.php', ['username' => 'student1', 'email' => 'other@usls.edu.ph', 'password' => $pw['student'], 'password_confirm' => $pw['student']]);
+$r = $c->submit('register.php', ['first_name' => 'Test', 'last_name' => 'Person', 'username' => 'student1', 'email' => 'other@usls.edu.ph', 'password' => $pw['student'], 'password_confirm' => $pw['student']]);
 $t->check('Duplicate username is rejected', str_contains($r->body, 'already registered'));
 
 $t->section('CSRF protection');
@@ -272,7 +277,7 @@ for ($i = 0; $i < 5; $i++) {
     login($c, 't_other', 'Wrong#Guess' . $i);
 }
 $r = login($c, 't_other', $pw['other']);
-$t->check('After 5 failures even the correct password is refused', str_contains($r->body, 'Too many failed sign-in attempts'));
+$t->check('After 5 failures even the correct password is refused', str_contains($r->body, 'Too many failed sign-in attempts') && str_contains($r->body, 'data-cooldown='));
 $t->check('Lockout is written to the audit log', (int) $db->query("SELECT COUNT(*) FROM audit_log WHERE event = 'account_locked' AND username = 't_other'")->fetchColumn() > 0);
 for ($i = 0; $i < 5; $i++) {
     login($c, 'ghost_account', 'Wrong#Guess' . $i);
@@ -512,9 +517,9 @@ $t->section('Rate limits per network address');
 $db->exec("DELETE FROM auth_attempts WHERE action = 'register'");
 $c = $client();
 for ($i = 1; $i <= MAX_REGISTRATIONS; $i++) {
-    $c->submit('register.php', ['username' => "bulk$i", 'email' => "bulk$i@usls.edu.ph", 'password' => $pw['student'], 'password_confirm' => $pw['student']]);
+    $c->submit('register.php', ['first_name' => 'Test', 'last_name' => 'Person', 'username' => "bulk$i", 'email' => "bulk$i@usls.edu.ph", 'password' => $pw['student'], 'password_confirm' => $pw['student']]);
 }
-$r = $c->submit('register.php', ['username' => 'bulk_extra', 'email' => 'bulk_extra@usls.edu.ph', 'password' => $pw['student'], 'password_confirm' => $pw['student']]);
+$r = $c->submit('register.php', ['first_name' => 'Test', 'last_name' => 'Person', 'username' => 'bulk_extra', 'email' => 'bulk_extra@usls.edu.ph', 'password' => $pw['student'], 'password_confirm' => $pw['student']]);
 $t->check('Mass account creation from one address is blocked', str_contains($r->body, 'Too many accounts'));
 $db->exec("DELETE FROM auth_attempts WHERE action = 'login'");
 for ($i = 0; $i < (int) App\Core\Config::get('security.max_login_failures_per_ip'); $i++) {
@@ -522,6 +527,104 @@ for ($i = 0; $i < (int) App\Core\Config::get('security.max_login_failures_per_ip
 }
 $t->check('Password spraying across many accounts locks the address', str_contains(login($c, 't_admin', $pw['admin'])->body, 'Too many failed sign-in attempts'));
 $db->exec("DELETE FROM auth_attempts");
+
+$t->section('Names on accounts');
+$db->exec('DELETE FROM auth_attempts');
+$c = $client();
+$r = $c->submit('register.php', ['first_name' => '', 'last_name' => '', 'username' => 'noname', 'email' => 'noname@usls.edu.ph', 'password' => $pw['student'], 'password_confirm' => $pw['student']]);
+$t->check('First and last name are required', str_contains($r->body, 'first name') && str_contains($r->body, 'last name') && !UserRepository::findByLogin('noname'));
+$r = $c->submit('register.php', ['first_name' => '<script>x</script>', 'last_name' => 'Cruz', 'username' => 'badname', 'email' => 'badname@usls.edu.ph', 'password' => $pw['student'], 'password_confirm' => $pw['student']]);
+$t->check('A name containing HTML is refused', str_contains($r->body, 'first name') && !UserRepository::findByLogin('badname'));
+$r = $c->submit('register.php', ['first_name' => 'Marigold', 'last_name' => 'Cruz', 'username' => 'mcruz', 'email' => 'mcruz@usls.edu.ph', 'password' => 'Marigold#2026xy', 'password_confirm' => 'Marigold#2026xy']);
+$t->check('A password containing your name is refused', str_contains($r->body, 'include your name'));
+$r = $c->submit('register.php', ['first_name' => 'Ma. José-Ñiño', 'last_name' => "O'Brien", 'username' => 'mjose', 'email' => 'mjose@usls.edu.ph', 'password' => $pw['student'], 'password_confirm' => $pw['student']]);
+$named = UserRepository::findByLogin('mjose');
+$t->check('Accented names, dots, dashes and apostrophes are accepted and stored', ($named['first_name'] ?? '') === 'Ma. José-Ñiño' && ($named['last_name'] ?? '') === "O'Brien");
+login($c, 'mjose', $pw['student']);
+$t->check('The first name is used in the greeting', str_contains($c->get('dashboard.php')->body, 'Ma. José-Ñiño'));
+$c->submit('account.php', ['action' => 'update_profile', 'first_name' => 'Maria', 'last_name' => 'Santos']);
+$t->check('Users can update their name (for accounts created before names existed)', UserRepository::find((int) $named['id'])['first_name'] === 'Maria');
+
+$t->section('Common passwords, attempts left and cooldown');
+$r = $client()->get('register.php');
+$t->check('The sign-up form states the common-password rule before submitting', str_contains($r->body, 'Not a common password') && str_contains($r->body, 'data-common='));
+$t->check('The list given to the browser is the list the server enforces', str_contains($r->body, e(json_encode(PasswordPolicy::COMMON))));
+$r = $client()->submit('register.php', ['first_name' => 'Test', 'last_name' => 'Person', 'username' => 'commonpw', 'email' => 'commonpw@usls.edu.ph', 'password' => 'Qwertyuiop#1234', 'password_confirm' => 'Qwertyuiop#1234']);
+$t->check('A common word with symbols and numbers added is still refused', str_contains($r->body, 'too common'));
+$c = $client();
+$r1 = login($c, 't_admin', 'Wrong#Guess1');
+$r2 = login($c, 't_admin', 'Wrong#Guess2');
+$u1 = login($c, 'no_such_person', 'Wrong#Guess1');
+$t->check('A wrong password shows how many attempts are left', str_contains($r1->body, '4 attempts left') && str_contains($r2->body, '3 attempts left'));
+$t->check('An unknown username shows the same count (no account enumeration)', str_contains($u1->body, '4 attempts left'));
+for ($i = 0; $i < 2; $i++) {
+    $last = login($c, 't_admin', 'Wrong#Guess3');
+}
+$t->check('The count reaches 1 attempt (singular)', str_contains($last->body, '1 attempt left'));
+$last = login($c, 't_admin', 'Wrong#Guess4');
+preg_match('/data-cooldown="(\d+)"/', $last->body, $m);
+$t->check('The attempt that reaches the limit starts a cooldown with seconds remaining', (int) ($m[1] ?? 0) > 0 && (int) ($m[1] ?? 0) <= 900, $m[1] ?? 'none');
+$db->exec('UPDATE auth_attempts SET created_at = created_at - INTERVAL 300 SECOND');
+preg_match('/data-cooldown="(\d+)"/', login($c, 't_admin', $pw['admin'])->body, $m);
+$t->check('The cooldown counts down (5 minutes later about 10 minutes remain)', (int) ($m[1] ?? 0) > 590 && (int) ($m[1] ?? 0) <= 600, $m[1] ?? 'none');
+$wrongCurrent = $client();
+login($wrongCurrent, 't_tech', 'Brand#NewPass2026');
+$t->check('Wrong current password shows attempts left', str_contains($wrongCurrent->submit('account.php', ['action' => 'change_password', 'current_password' => 'Nope#Nope1234', 'new_password' => 'Brand#Other2026x', 'confirm_password' => 'Brand#Other2026x'])->body, 'attempts left'));
+$db->exec('DELETE FROM auth_attempts');
+
+$t->section('Required two-factor (the default configuration)');
+$strict = static fn (string $ua = 'Mozilla/5.0 HelpdeskTest') => new HttpClient('http://127.0.0.1:8766/', $ua);
+for ($i = 0; $i < 50 && @file_get_contents('http://127.0.0.1:8766/login.php') === false; $i++) {
+    usleep(100000);
+}
+UserRepository::create('t_mfa', 't_mfa@usls.edu.ph', PasswordHasher::hash($pw['student']), 'user', 'Multi', 'Factor');
+$mfaId = (int) UserRepository::findByLogin('t_mfa')['id'];
+$c = $strict();
+$r = login($c, 't_mfa', $pw['student']);
+$t->check('Signing in without two-factor goes to the required setup', $r->status === 302 && str_ends_with($r->location, 'setup_2fa.php'));
+$blocked = [];
+foreach (['dashboard.php', 'my_tickets.php', 'account.php', 'admin_dashboard.php'] as $page) {
+    $status = $c->get($page)->status;
+    if ($status !== 302) {
+        $blocked[] = "$page ($status)";
+    }
+}
+$t->check('No page can be reached until setup is finished', $blocked === [], implode(', ', $blocked));
+$page = $c->get('setup_2fa.php')->body;
+preg_match('/id="totp-secret">([A-Z2-7 ]+)</', $page, $m);
+$enrolSecret = str_replace(' ', '', $m[1] ?? '');
+$t->check('The setup page shows a setup key', strlen($enrolSecret) === 32);
+$t->check('A wrong code does not finish setup', str_contains($c->submit('setup_2fa.php', ['code' => '000000'])->body, 'did not match') && !UserRepository::find($mfaId)['totp_enabled']);
+$r = $c->submit('setup_2fa.php', ['code' => Totp::code($enrolSecret, Totp::currentStep())]);
+$t->check('A correct code finishes setup and signs the user in', $r->status === 302 && str_contains($r->location, 'account.php') && (bool) UserRepository::find($mfaId)['totp_enabled']);
+preg_match_all('/<span>([0-9A-F]{6}-[0-9A-F]{6})<\/span>/', $c->get('account.php')->body, $enrolCodes);
+$t->check('Recovery codes are shown right after setup', count($enrolCodes[1]) === 8);
+$t->check('The app is now fully usable', $c->get('dashboard.php')->status === 200);
+$c = $strict();
+$t->check('The next sign-in asks for a code, not setup', str_ends_with(login($c, 't_mfa', $pw['student'])->location, 'verify_2fa.php'));
+$db->exec('UPDATE users SET totp_last_step = ' . (Totp::currentStep() - 2) . " WHERE id = $mfaId");
+$c->submit('verify_2fa.php', ['code' => Totp::code($enrolSecret, Totp::currentStep())]);
+$r = $c->submit('account.php', ['action' => '2fa_disable', 'current_password' => $pw['student'], 'code' => '000000']);
+$t->check('Removing a device needs a valid code as well as the password', str_contains($r->body, 'not valid') && (bool) UserRepository::find($mfaId)['totp_enabled']);
+$r = $c->submit('account.php', ['action' => '2fa_disable', 'current_password' => $pw['student'], 'code' => $enrolCodes[1][0]]);
+$t->check('Moving to a new device signs the user out', $r->status === 302 && str_ends_with($r->location, 'login.php') && !UserRepository::find($mfaId)['totp_enabled']);
+$t->check('Two-factor cannot stay off: the next sign-in requires setup again', str_ends_with(login($strict(), 't_mfa', $pw['student'])->location, 'setup_2fa.php'));
+$other = $strict('Mozilla/5.0 OtherBrowser');
+$first = $strict();
+login($first, 't_mfa', $pw['student']);
+$other->setCookie('USLS_HD_SID', $first->cookie('USLS_HD_SID'));
+$t->check('The setup key cannot be read with a stolen cookie from another browser', !str_contains($other->get('setup_2fa.php')->body, 'totp-secret'));
+
+$t->section('Cooldown ends on time (default configuration)');
+$db->exec('DELETE FROM auth_attempts');
+$c = $strict();
+for ($i = 0; $i < 5; $i++) {
+    $last = login($c, 't_mfa', 'Wrong#Guess' . $i);
+}
+$t->check('The cooldown blocks even the correct password', str_contains(login($c, 't_mfa', $pw['student'])->body, 'data-cooldown='));
+sleep(SHORT_COOLDOWN + 2);
+$t->check('After the cooldown the correct password works again', login($c, 't_mfa', $pw['student'])->status === 302);
+$db->exec('DELETE FROM auth_attempts');
 
 $t->section('Information leakage');
 $t->check('No PHP errors, warnings or stack traces in any response', HttpClient::$leaks === [], implode(', ', array_unique(HttpClient::$leaks)));

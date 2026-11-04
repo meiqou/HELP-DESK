@@ -3,6 +3,7 @@ require dirname(__DIR__) . '/src/bootstrap.php';
 
 use App\Auth\Auth;
 use App\Auth\RecoveryCodes;
+use App\Auth\Registration;
 use App\Core\Config;
 use App\Repositories\UserRepository;
 use App\Security\AuditLog;
@@ -15,6 +16,7 @@ $user = Auth::requireLogin();
 $userId = (int) $user['id'];
 $errors = [];
 $section = '';
+$twoFactorRequired = (bool) Config::get('security.require_two_factor');
 
 if (is_post()) {
     verify_csrf();
@@ -28,6 +30,7 @@ if (is_post()) {
         }
         return $result === 'ok';
     };
+    $wrongPassword = static fn (string $message): string => $message . ' ' . attempts_text(Auth::reauthAttemptsLeft($user)) . ' left before you are signed out.';
 
     switch (post_string('action')) {
         case 'change_password':
@@ -35,7 +38,7 @@ if (is_post()) {
             $new = post_raw('new_password');
 
             if (!$passwordOk('password_change_failed')) {
-                $errors[] = 'Your current password is incorrect.';
+                $errors[] = $wrongPassword('Your current password is incorrect.');
                 break;
             }
             if (!hash_equals($new, post_raw('confirm_password'))) {
@@ -44,7 +47,7 @@ if (is_post()) {
             if (hash_equals($current, $new)) {
                 $errors[] = 'Choose a password different from your current one.';
             }
-            $errors = array_merge($errors, PasswordPolicy::errors($new, $user['username'], $user['email']));
+            $errors = array_merge($errors, PasswordPolicy::errors($new, $user['username'], $user['email'], [$user['first_name'], $user['last_name']]));
             if ($errors) {
                 break;
             }
@@ -59,11 +62,11 @@ if (is_post()) {
             // session cannot enrol the attacker's own authenticator.
             $section = '2fa';
             if ($user['totp_enabled']) {
-                $errors[] = 'Two-factor authentication is already on. Turn it off first to use a different device.';
+                $errors[] = 'Two-factor authentication is already on. Reset it first to use a different device.';
                 break;
             }
             if (!$passwordOk('2fa_setup_failed')) {
-                $errors[] = 'Your password is incorrect.';
+                $errors[] = $wrongPassword('Your password is incorrect.');
                 break;
             }
             $_SESSION['pending_totp_secret'] = Totp::generateSecret();
@@ -95,25 +98,51 @@ if (is_post()) {
 
         case '2fa_disable':
             $section = '2fa';
+            // Removing the second factor needs both factors, so a stolen password alone is not enough.
             if (!$passwordOk('2fa_disable_failed')) {
-                $errors[] = 'Your password is incorrect.';
+                $errors[] = $wrongPassword('Your password is incorrect.');
                 break;
             }
-            UserRepository::disableTotp($userId);
+            $codeResult = Auth::verifyCurrentCode($user, post_string('code'));
+            if ($codeResult === 'signed_out') {
+                redirect('login.php');
+            }
+            if ($codeResult !== 'ok') {
+                $errors[] = 'That authenticator or recovery code is not valid.';
+                break;
+            }
+            UserRepository::disableTotp($userId, $twoFactorRequired);
             AuditLog::record('2fa_disabled');
+            if ($twoFactorRequired) {
+                Auth::logout('Your old device was removed. Sign in again to link your new one.');
+                redirect('login.php');
+            }
             flash('warning', 'Two-factor authentication has been turned off. Your account is now protected by your password only.');
             redirect('account.php#two-factor');
 
         case '2fa_new_codes':
             $section = '2fa';
             if (!$passwordOk('2fa_new_codes_failed')) {
-                $errors[] = 'Your password is incorrect.';
+                $errors[] = $wrongPassword('Your password is incorrect.');
                 break;
             }
             $_SESSION['show_recovery_codes'] = RecoveryCodes::regenerate($userId);
             AuditLog::record('2fa_recovery_codes_regenerated');
             flash('success', 'New recovery codes generated. Your old codes no longer work.');
             redirect('account.php#two-factor');
+
+        case 'update_profile':
+            $section = 'profile';
+            $firstName = post_string('first_name');
+            $lastName = post_string('last_name');
+            $errors = Registration::nameErrors($firstName, $lastName);
+            if ($errors) {
+                break;
+            }
+            UserRepository::updateName($userId, $firstName, $lastName);
+            AuditLog::record('profile_updated');
+            flash('success', 'Your name was updated.');
+            redirect('account.php');
 
         case 'revoke_sessions':
             Auth::signOutOtherSessions($userId);
@@ -134,6 +163,7 @@ view('account', [
     'errors'         => $errors,
     'section'        => $section,
     'totpEnabled'    => (bool) $fresh['totp_enabled'],
+    'twoFactorRequired' => $twoFactorRequired,
     'pendingSecret'  => $_SESSION['pending_totp_secret'] ?? null,
     'newCodes'       => $newCodes,
     'remainingCodes' => RecoveryCodes::remaining($userId),

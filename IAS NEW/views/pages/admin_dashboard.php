@@ -1,7 +1,7 @@
 <div class="page-header">
     <div>
         <p class="welcome-date"><?= e(date('l, F j, Y')) ?></p>
-        <h1><?= e(greeting()) ?>, <?= e($user['username']) ?></h1>
+        <h1><?= e(greeting()) ?>, <?= e(given_name($user)) ?></h1>
         <p class="muted"><?= e(App\Auth\Rbac::label($user['role'])) ?> &middot; last sign-in <?= e(format_date($user['last_login_at'])) ?></p>
     </div>
     <a href="admin_tickets.php" class="btn btn-primary"><?= icon('inbox') ?> Open ticket queue</a>

@@ -16,7 +16,7 @@ if (is_post()) {
     if ($result === 'signed_out') {
         redirect('login.php');
     }
-    $error = 'Incorrect password.';
+    $error = 'Incorrect password. ' . attempts_text(Auth::reauthAttemptsLeft($user)) . ' left before you are signed out.';
 }
 
 view('confirm_password', ['pageTitle' => 'Confirm password', 'error' => $error, 'user' => $user]);

@@ -123,6 +123,29 @@ function form_errors(array $errors, string $intro = ''): string
     return '<div class="alert alert-error" role="alert">' . ($intro !== '' ? e($intro) : '') . '<ul>' . $items . '</ul></div>';
 }
 
+/** Full name for display; falls back to the username for accounts without a name yet. */
+function display_name(array $user): string
+{
+    return trim(($user['first_name'] ?? '') . ' ' . ($user['last_name'] ?? '')) ?: $user['username'];
+}
+
+function given_name(array $user): string
+{
+    return ($user['first_name'] ?? '') ?: $user['username'];
+}
+
+/** "1 attempt" / "3 attempts" */
+function attempts_text(int $count): string
+{
+    return $count . ($count === 1 ? ' attempt' : ' attempts');
+}
+
+/** 872 seconds becomes "14:32" */
+function format_countdown(int $seconds): string
+{
+    return sprintf('%d:%02d', intdiv($seconds, 60), $seconds % 60);
+}
+
 function badge_class(string $value): string
 {
     return 'badge-' . strtolower(str_replace(' ', '-', $value));

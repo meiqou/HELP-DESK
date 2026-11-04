@@ -26,13 +26,13 @@ if (is_post()) {
             }
             redirect(home_for($result['user']));
         case 'locked':
-            Session::destroy('Too many invalid codes. Your account is temporarily locked.');
+            Session::destroy('Too many invalid codes. Your account is locked for ' . format_countdown((int) $result['retry_after']) . ' minutes.');
             redirect('login.php');
         case 'expired':
             Session::destroy('Your verification window expired. Please sign in again.');
             redirect('login.php');
         default:
-            $error = 'That code is not valid. Check your authenticator app and try again.';
+            $error = 'That code is not valid. ' . attempts_text($result['attempts_left']) . ' left before your account locks.';
     }
 }
 

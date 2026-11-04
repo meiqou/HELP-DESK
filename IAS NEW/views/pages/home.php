@@ -99,7 +99,7 @@ $categories = [
             </div>
             <div>
                 <h3>Authentication</h3>
-                <p>Optional two-factor sign-in, automatic lockout and short, hijack-resistant sessions.</p>
+                <p>Required two-factor sign-in, a sign-in cooldown after failed attempts and short, hijack-resistant sessions.</p>
             </div>
             <div>
                 <h3>Authorization</h3>

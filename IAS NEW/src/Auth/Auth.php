@@ -27,7 +27,8 @@ final class Auth
      * Step 1: username (or e-mail) and password.
      *
      * @return array{status: string, user?: array}
-     *   status is one of: empty, locked, invalid, inactive, two_factor, success
+     *   status is one of: empty, locked, invalid, two_factor, enrol, success
+     *   plus attempts_left (invalid) or retry_after in seconds (locked)
      */
     public static function attempt(string $login, string $password): array
     {
@@ -44,7 +45,7 @@ final class Auth
 
         if (RateLimiter::isLoginLocked($identifier)) {
             AuditLog::record('login_blocked', 'Attempt while locked out', $userId, $identifier);
-            return ['status' => 'locked'];
+            return ['status' => 'locked', 'retry_after' => RateLimiter::cooldownSeconds($identifier)];
         }
 
         if (!$account) {
@@ -59,9 +60,7 @@ final class Auth
 
         if (!$account['is_active']) {
             // Answer exactly like a wrong password, so the response never confirms the password.
-            RateLimiter::record('login', $identifier, false);
-            AuditLog::record('login_inactive', 'Sign-in attempt to a deactivated account', $userId, $identifier);
-            return ['status' => 'invalid'];
+            return self::failed($identifier, $userId, 'Sign-in attempt to a deactivated account', 'login_inactive');
         }
 
         if ($needsRehash) {
@@ -81,19 +80,79 @@ final class Auth
             return ['status' => 'two_factor', 'user' => $account];
         }
 
+        if (Config::get('security.require_two_factor')) {
+            // Two-factor is mandatory. The account stays signed out until an authenticator app
+            // is linked, so a half-finished setup cannot reach any page or action.
+            Session::renew(['pending_enrolment' => [
+                'user_id'         => $userId,
+                'session_version' => (int) $account['session_version'],
+                'expires'         => time() + (int) Config::get('security.enrolment_timeout'),
+                'fingerprint'     => Session::fingerprint(),
+                'secret'          => Totp::generateSecret(),
+            ]]);
+            AuditLog::record('login_password_ok_enrolment_required', '', $userId, $identifier);
+            return ['status' => 'enrol', 'user' => $account];
+        }
+
         self::login($account);
         AuditLog::record('login_success', '', $userId, $identifier);
         return ['status' => 'success', 'user' => $account];
     }
 
-    private static function failed(string $identifier, ?int $userId, string $reason): array
+    private static function failed(string $identifier, ?int $userId, string $reason, string $event = 'login_failed'): array
     {
         RateLimiter::record('login', $identifier, false);
-        AuditLog::record('login_failed', $reason, $userId, $identifier);
+        AuditLog::record($event, $reason, $userId, $identifier);
         if (RateLimiter::isLoginLocked($identifier)) {
             AuditLog::record('account_locked', 'Temporarily locked after repeated failures', $userId, $identifier);
+            return ['status' => 'locked', 'retry_after' => RateLimiter::cooldownSeconds($identifier)];
         }
-        return ['status' => 'invalid'];
+        return ['status' => 'invalid', 'attempts_left' => RateLimiter::loginAttemptsLeft($identifier)];
+    }
+
+    /** The account that must link an authenticator app before it can sign in, or null. */
+    public static function pendingEnrolmentUser(): ?array
+    {
+        $pending = $_SESSION['pending_enrolment'] ?? null;
+        if (!$pending || time() > $pending['expires']) {
+            return null;
+        }
+        $user = UserRepository::find((int) $pending['user_id']);
+        if (!$user || !$user['is_active'] || $user['totp_enabled']
+            || (int) $user['session_version'] !== (int) $pending['session_version']
+            || !hash_equals($pending['fingerprint'], Session::fingerprint())) {
+            return null;
+        }
+        return $user;
+    }
+
+    /**
+     * Finishes mandatory two-factor setup: proves the app works, then signs the user in.
+     *
+     * @return string one of: expired, invalid, success
+     */
+    public static function completeEnrolment(string $code): string
+    {
+        $user = self::pendingEnrolmentUser();
+        if (!$user) {
+            return 'expired';
+        }
+        $id = (int) $user['id'];
+        $secret = $_SESSION['pending_enrolment']['secret'];
+        $step = Totp::verify($secret, $code);
+        if ($step === null) {
+            AuditLog::record('2fa_setup_failed', 'Wrong code during required setup', $id, $user['username']);
+            return 'invalid';
+        }
+        if (!UserRepository::enableTotp($id, Encryptor::encrypt($secret), $step)) {
+            return 'expired';   // another browser finished setup first
+        }
+        $codes = RecoveryCodes::regenerate($id);
+        self::login($user);
+        $_SESSION['show_recovery_codes'] = $codes;
+        AuditLog::record('2fa_enabled', 'Required setup completed', $id, $user['username']);
+        AuditLog::record('login_success_2fa', '', $id, $user['username']);
+        return 'success';
     }
 
     /** The account waiting for its second factor, or null if none / expired. */
@@ -134,7 +193,7 @@ final class Auth
         if (RateLimiter::isLoginLocked($user['username'])
             || RateLimiter::failures('2fa', $user['username'], $s['lockout_window']) >= $s['max_login_failures_per_account']) {
             AuditLog::record('login_blocked', 'Two-factor attempt while locked out', $id, $user['username']);
-            return ['status' => 'locked'];
+            return ['status' => 'locked', 'retry_after' => (int) $s['lockout_window']];
         }
 
         $secret = Encryptor::decrypt($user['totp_secret']);
@@ -160,9 +219,9 @@ final class Auth
             // Too many wrong codes: lock the account and discard the half-finished sign-in.
             RateLimiter::lockAccount($user['username']);
             AuditLog::record('account_locked', 'Too many invalid two-factor codes', $id, $user['username']);
-            return ['status' => 'locked'];
+            return ['status' => 'locked', 'retry_after' => RateLimiter::cooldownSeconds($user['username'])];
         }
-        return ['status' => 'invalid'];
+        return ['status' => 'invalid', 'attempts_left' => $s['max_login_failures_per_account'] - RateLimiter::failures('2fa', $user['username'], $s['lockout_window'])];
     }
 
     /**
@@ -272,6 +331,43 @@ final class Auth
             // Someone at an unattended computer is guessing the password.
             AuditLog::record('session_ended_reauth_failures');
             Session::destroy('You were signed out after too many incorrect password confirmations.');
+            return 'signed_out';
+        }
+        return 'invalid';
+    }
+
+    /** Wrong current-password guesses left before the session is ended. */
+    public static function reauthAttemptsLeft(array $user): int
+    {
+        $s = Config::get('security');
+        return max(0, $s['max_login_failures_per_account'] - RateLimiter::failures('reauth', $user['username'], $s['lockout_window']));
+    }
+
+    /**
+     * Second-factor check for a signed-in user (authenticator code or recovery code).
+     * Returns 'ok', 'invalid' or 'signed_out' (too many wrong codes: the account locks).
+     */
+    public static function verifyCurrentCode(array $user, string $code): string
+    {
+        $row = UserRepository::find((int) $user['id']);
+        $secret = Encryptor::decrypt($row['totp_secret'] ?? null);
+        $lastStep = $row['totp_last_step'] !== null ? (int) $row['totp_last_step'] : null;
+        $step = $secret ? Totp::verify($secret, $code, $lastStep) : null;
+        if ($step !== null && !UserRepository::claimTotpStep((int) $row['id'], $step)) {
+            $step = null;
+        }
+        if ($step !== null || (strlen(trim($code)) > Totp::DIGITS && RecoveryCodes::consume((int) $row['id'], $code))) {
+            RateLimiter::record('2fa', $user['username'], true);
+            return 'ok';
+        }
+
+        RateLimiter::record('2fa', $user['username'], false);
+        AuditLog::record('2fa_failed', 'Invalid code on the account page');
+        $s = Config::get('security');
+        if (RateLimiter::failures('2fa', $user['username'], $s['lockout_window']) >= $s['max_login_failures_per_account']) {
+            RateLimiter::lockAccount($user['username']);
+            AuditLog::record('account_locked', 'Too many invalid two-factor codes');
+            Session::destroy('Too many invalid codes. Your account is temporarily locked.');
             return 'signed_out';
         }
         return 'invalid';

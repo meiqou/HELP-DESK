@@ -68,6 +68,62 @@ final class RateLimiter
             || self::attemptsFromIp('login', $s['lockout_window']) >= $s['max_login_failures_per_ip'];
     }
 
+    /**
+     * Sign-in attempts left before the cooldown starts. Uses the same counters as the lockout,
+     * so a name that does not exist shows exactly the same numbers as a real account.
+     */
+    public static function loginAttemptsLeft(string $identifier): int
+    {
+        $s = Config::get('security');
+        return max(0, min(
+            $s['max_login_failures_per_account'] - self::failures('login', $identifier, $s['lockout_window']),
+            $s['max_login_failures_per_ip'] - self::attemptsFromIp('login', $s['lockout_window'])
+        ));
+    }
+
+    /**
+     * Seconds until sign-in is allowed again (0 when not locked).
+     */
+    public static function cooldownSeconds(string $identifier): int
+    {
+        $s = Config::get('security');
+        $window = (int) $s['lockout_window'];
+        $id = self::normalize($identifier);
+        $pdo = Database::connection();
+
+        $account = $pdo->prepare(
+            'SELECT TIMESTAMPDIFF(SECOND, created_at, NOW()) FROM auth_attempts
+             WHERE action = \'login\' AND identifier = ? AND success = 0
+               AND created_at > NOW() - INTERVAL ? SECOND
+               AND id > COALESCE((SELECT MAX(id) FROM auth_attempts
+                                  WHERE action = \'login\' AND identifier = ? AND success = 1), 0)
+             ORDER BY id'
+        );
+        $account->execute([$id, $window, $id]);
+
+        $network = $pdo->prepare(
+            'SELECT TIMESTAMPDIFF(SECOND, created_at, NOW()) FROM auth_attempts
+             WHERE action = \'login\' AND ip = ? AND success = 0 AND created_at > NOW() - INTERVAL ? SECOND
+             ORDER BY id'
+        );
+        $network->execute([client_ip(), $window]);
+
+        return max(
+            self::remaining($account->fetchAll(\PDO::FETCH_COLUMN), (int) $s['max_login_failures_per_account'], $window),
+            self::remaining($network->fetchAll(\PDO::FETCH_COLUMN), (int) $s['max_login_failures_per_ip'], $window)
+        );
+    }
+
+    /**
+     * @param array $ages age in seconds of each failure, oldest first
+     */
+    private static function remaining(array $ages, int $max, int $window): int
+    {
+        $over = count($ages) - $max;
+        // The lock lifts when the failure that reached the limit leaves the window.
+        return $over < 0 ? 0 : max(1, $window - (int) $ages[$over]);
+    }
+
     public static function lockAccount(string $identifier): void
     {
         $max = (int) Config::get('security.max_login_failures_per_account');

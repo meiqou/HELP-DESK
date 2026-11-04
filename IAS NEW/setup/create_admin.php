@@ -64,7 +64,13 @@ if ($existing) {
     AuditLog::record('admin_promoted_cli', $username, $id, $username);
     echo "Existing account '{$username}' is now an administrator with the new password." . PHP_EOL;
 } else {
-    $id = UserRepository::create($username, $email, PasswordHasher::hash($password), 'admin');
+    $firstName = getenv('ADMIN_FIRST_NAME') ?: ask('First name: ');
+    $lastName = getenv('ADMIN_LAST_NAME') ?: ask('Last name: ');
+    if ($problems = App\Auth\Registration::nameErrors($firstName, $lastName)) {
+        fwrite(STDERR, implode(PHP_EOL, $problems) . PHP_EOL);
+        exit(1);
+    }
+    $id = UserRepository::create($username, $email, PasswordHasher::hash($password), 'admin', $firstName, $lastName);
     AuditLog::record('admin_created_cli', $username, $id, $username);
     echo "Administrator '{$username}' created. Sign in at login.php" . PHP_EOL;
 }

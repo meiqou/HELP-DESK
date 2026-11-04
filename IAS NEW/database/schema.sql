@@ -17,6 +17,8 @@ USE secure_system;
 CREATE TABLE IF NOT EXISTS users (
     id                  INT NOT NULL AUTO_INCREMENT,
     username            VARCHAR(50)  NOT NULL,
+    first_name          VARCHAR(100) NOT NULL DEFAULT '',
+    last_name           VARCHAR(100) NOT NULL DEFAULT '',
     email               VARCHAR(254) NOT NULL,
     password            VARCHAR(255) NOT NULL,            -- Argon2id hash (never plain text)
     role                ENUM('user', 'technician', 'admin') NOT NULL DEFAULT 'user',
@@ -38,6 +40,8 @@ CREATE TABLE IF NOT EXISTS users (
 ALTER TABLE users
     MODIFY password VARCHAR(255) NOT NULL,
     MODIFY role ENUM('user', 'technician', 'admin') NOT NULL DEFAULT 'user',
+    ADD COLUMN IF NOT EXISTS first_name          VARCHAR(100) NOT NULL DEFAULT '' AFTER username,
+    ADD COLUMN IF NOT EXISTS last_name           VARCHAR(100) NOT NULL DEFAULT '' AFTER first_name,
     ADD COLUMN IF NOT EXISTS is_active           TINYINT(1)   NOT NULL DEFAULT 1,
     ADD COLUMN IF NOT EXISTS session_version     INT UNSIGNED NOT NULL DEFAULT 1,
     ADD COLUMN IF NOT EXISTS totp_secret         VARCHAR(255) NULL,
