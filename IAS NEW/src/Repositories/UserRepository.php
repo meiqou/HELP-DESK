@@ -106,17 +106,28 @@ final class UserRepository
      */
     public static function enableTotp(int $id, string $encryptedSecret, int $step): bool
     {
-        $stmt = self::db()->prepare('UPDATE users SET totp_secret = ?, totp_enabled = 1, totp_last_step = ? WHERE id = ? AND totp_enabled = 0');
+        $stmt = self::db()->prepare("UPDATE users SET totp_secret = ?, totp_enabled = 1, two_factor_method = 'totp', totp_last_step = ? WHERE id = ? AND totp_enabled = 0");
         $stmt->execute([$encryptedSecret, $step, $id]);
+        return $stmt->rowCount() === 1;
+    }
+
+    /**
+     * Same as enableTotp(), for accounts that receive their codes by e-mail (no stored secret).
+     */
+    public static function enableEmailTwoFactor(int $id): bool
+    {
+        $stmt = self::db()->prepare("UPDATE users SET totp_secret = NULL, totp_enabled = 1, two_factor_method = 'email', totp_last_step = NULL WHERE id = ? AND totp_enabled = 0");
+        $stmt->execute([$id]);
         return $stmt->rowCount() === 1;
     }
 
     public static function disableTotp(int $id, bool $signOutEverywhere = false): void
     {
-        $sql = 'UPDATE users SET totp_enabled = 0, totp_secret = NULL, totp_last_step = NULL'
+        $sql = "UPDATE users SET totp_enabled = 0, two_factor_method = 'totp', totp_secret = NULL, totp_last_step = NULL"
             . ($signOutEverywhere ? ', session_version = session_version + 1' : '') . ' WHERE id = ?';
         self::db()->prepare($sql)->execute([$id]);
         self::db()->prepare('DELETE FROM recovery_codes WHERE user_id = ?')->execute([$id]);
+        self::db()->prepare('DELETE FROM email_codes WHERE user_id = ?')->execute([$id]);
     }
 
     /**

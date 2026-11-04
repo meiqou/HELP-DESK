@@ -25,7 +25,8 @@ CREATE TABLE IF NOT EXISTS users (
     is_active           TINYINT(1)   NOT NULL DEFAULT 1,
     session_version     INT UNSIGNED NOT NULL DEFAULT 1,  -- bump to sign out all sessions
     totp_secret         VARCHAR(255) NULL,                -- AES-256-GCM encrypted
-    totp_enabled        TINYINT(1)   NOT NULL DEFAULT 0,
+    totp_enabled        TINYINT(1)   NOT NULL DEFAULT 0,  -- 1 = a second factor is on (app or e-mail)
+    two_factor_method   ENUM('totp', 'email') NOT NULL DEFAULT 'totp',
     totp_last_step      BIGINT       NULL,                -- blocks one-time-code replay
     password_changed_at DATETIME     NULL,
     last_login_at       DATETIME     NULL,
@@ -46,6 +47,7 @@ ALTER TABLE users
     ADD COLUMN IF NOT EXISTS session_version     INT UNSIGNED NOT NULL DEFAULT 1,
     ADD COLUMN IF NOT EXISTS totp_secret         VARCHAR(255) NULL,
     ADD COLUMN IF NOT EXISTS totp_enabled        TINYINT(1)   NOT NULL DEFAULT 0,
+    ADD COLUMN IF NOT EXISTS two_factor_method   ENUM('totp', 'email') NOT NULL DEFAULT 'totp' AFTER totp_enabled,
     ADD COLUMN IF NOT EXISTS totp_last_step      BIGINT       NULL,
     ADD COLUMN IF NOT EXISTS password_changed_at DATETIME     NULL,
     ADD COLUMN IF NOT EXISTS last_login_at       DATETIME     NULL,
@@ -110,6 +112,22 @@ CREATE TABLE IF NOT EXISTS recovery_codes (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
 -- -------------------------------------------------------------------------
+-- E-mailed sign-in codes (stored hashed, single use, short lived)
+-- -------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS email_codes (
+    id         BIGINT NOT NULL AUTO_INCREMENT,
+    user_id    INT NOT NULL,
+    purpose    VARCHAR(10) NOT NULL,   -- login, enrol or account
+    code_hash  CHAR(64) NOT NULL,
+    expires_at DATETIME NOT NULL,
+    used_at    DATETIME NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (id),
+    KEY idx_email_codes_user (user_id, purpose),
+    CONSTRAINT fk_email_codes_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+
+-- -------------------------------------------------------------------------
 -- Audit log (append-only, HMAC hash chain for tamper detection)
 -- No foreign key on user_id: the history must survive account deletion.
 -- -------------------------------------------------------------------------
@@ -139,6 +157,7 @@ CREATE TABLE IF NOT EXISTS audit_log (
 -- GRANT SELECT, INSERT, UPDATE, DELETE ON usls_helpdesk.tickets        TO 'helpdesk_app'@'localhost';
 -- GRANT SELECT, INSERT, UPDATE, DELETE ON usls_helpdesk.auth_attempts  TO 'helpdesk_app'@'localhost';
 -- GRANT SELECT, INSERT, UPDATE, DELETE ON usls_helpdesk.recovery_codes TO 'helpdesk_app'@'localhost';
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON usls_helpdesk.email_codes    TO 'helpdesk_app'@'localhost';
 -- GRANT SELECT, INSERT                 ON usls_helpdesk.audit_log      TO 'helpdesk_app'@'localhost';
 -- GRANT LOCK TABLES                    ON usls_helpdesk.*              TO 'helpdesk_app'@'localhost';
 -- FLUSH PRIVILEGES;

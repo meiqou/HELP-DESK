@@ -2,6 +2,7 @@
 require dirname(__DIR__) . '/src/bootstrap.php';
 
 use App\Auth\Auth;
+use App\Auth\EmailCodes;
 use App\Auth\RecoveryCodes;
 use App\Core\Session;
 
@@ -14,8 +15,24 @@ if (!$account) {
 }
 
 $error = '';
+$notice = '';
+$byEmail = $account['two_factor_method'] === 'email';
+$emailStatus = $_SESSION['pending_2fa']['email_status'] ?? '';
+unset($_SESSION['pending_2fa']['email_status']);
+// 'too_soon' is fine here: a code sent moments ago still works.
+if ($emailStatus !== '' && $emailStatus !== 'sent' && $emailStatus !== 'too_soon') {
+    $error = EmailCodes::message($emailStatus);   // the code sent at sign-in did not go out
+}
 
-if (is_post()) {
+if (is_post() && post_string('action') === 'resend') {
+    verify_csrf();
+    $status = Auth::resendLoginCode();
+    if ($status === 'sent') {
+        $notice = EmailCodes::message($status);
+    } else {
+        $error = EmailCodes::message($status);
+    }
+} elseif (is_post()) {
     verify_csrf();
     $result = Auth::verifySecondFactor(post_string('code'));
 
@@ -36,4 +53,11 @@ if (is_post()) {
     }
 }
 
-view('verify_2fa', ['pageTitle' => 'Two-factor verification', 'error' => $error, 'account' => $account], 'auth');
+view('verify_2fa', [
+    'pageTitle'   => 'Two-factor verification',
+    'error'       => $error,
+    'notice'      => $notice,
+    'account'     => $account,
+    'byEmail'     => $byEmail,
+    'maskedEmail' => EmailCodes::mask($account['email']),
+], 'auth');

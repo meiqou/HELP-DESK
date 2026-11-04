@@ -77,6 +77,9 @@ final class Auth
                 'fingerprint'     => Session::fingerprint(),
             ]]);
             AuditLog::record('login_password_ok_2fa_pending', '', $userId, $identifier);
+            if ($account['two_factor_method'] === 'email') {
+                $_SESSION['pending_2fa']['email_status'] = EmailCodes::send($account, 'login');
+            }
             return ['status' => 'two_factor', 'user' => $account];
         }
 
@@ -155,6 +158,86 @@ final class Auth
         return 'success';
     }
 
+    /** E-mails a setup code to the account's address, during required setup. */
+    public static function sendEnrolmentEmail(): string
+    {
+        $user = self::pendingEnrolmentUser();
+        if (!$user) {
+            return 'expired';
+        }
+        $status = EmailCodes::send($user, 'enrol');
+        if ($status === 'sent') {
+            $_SESSION['pending_enrolment']['email_sent'] = true;
+        }
+        return $status;
+    }
+
+    /**
+     * Finishes required setup with an e-mailed code, which proves the address really is the user's.
+     *
+     * @return array{status: string, attempts_left?: int, retry_after?: int}
+     *   status is one of: expired, locked, invalid, success
+     */
+    public static function completeEmailEnrolment(string $code): array
+    {
+        $user = self::pendingEnrolmentUser();
+        if (!$user) {
+            return ['status' => 'expired'];
+        }
+        $id = (int) $user['id'];
+        $s = Config::get('security');
+        if (self::secondFactorLocked($user['username'])) {
+            return ['status' => 'locked', 'retry_after' => (int) $s['lockout_window']];
+        }
+        if (!EmailCodes::verify($id, 'enrol', $code)) {
+            return self::secondFactorFailed($id, $user['username']);
+        }
+        if (!UserRepository::enableEmailTwoFactor($id)) {
+            return ['status' => 'expired'];   // another browser finished setup first
+        }
+        RateLimiter::record('2fa', $user['username'], true);
+        $codes = RecoveryCodes::regenerate($id);
+        self::login($user);
+        $_SESSION['show_recovery_codes'] = $codes;
+        AuditLog::record('2fa_enabled', 'Required setup completed with e-mail codes', $id, $user['username']);
+        AuditLog::record('login_success_2fa', '', $id, $user['username']);
+        return ['status' => 'success'];
+    }
+
+    /** True while the password step or the second-factor step is locked for this account. */
+    private static function secondFactorLocked(string $username): bool
+    {
+        $s = Config::get('security');
+        return RateLimiter::isLoginLocked($username)
+            || RateLimiter::failures('2fa', $username, $s['lockout_window']) >= $s['max_login_failures_per_account'];
+    }
+
+    /** Counts a wrong code, locking the account when the limit is reached. */
+    private static function secondFactorFailed(int $id, string $username): array
+    {
+        $s = Config::get('security');
+        RateLimiter::record('2fa', $username, false);
+        AuditLog::record('2fa_failed', 'Invalid verification code', $id, $username);
+
+        if (RateLimiter::failures('2fa', $username, $s['lockout_window']) >= $s['max_login_failures_per_account']) {
+            // Too many wrong codes: lock the account and discard the half-finished sign-in.
+            RateLimiter::lockAccount($username);
+            AuditLog::record('account_locked', 'Too many invalid two-factor codes', $id, $username);
+            return ['status' => 'locked', 'retry_after' => RateLimiter::cooldownSeconds($username)];
+        }
+        return ['status' => 'invalid', 'attempts_left' => $s['max_login_failures_per_account'] - RateLimiter::failures('2fa', $username, $s['lockout_window'])];
+    }
+
+    /** Sends a fresh code during the second sign-in step. */
+    public static function resendLoginCode(): string
+    {
+        $user = self::pendingTwoFactorUser();
+        if (!$user || $user['two_factor_method'] !== 'email' || self::secondFactorLocked($user['username'])) {
+            return 'failed';
+        }
+        return EmailCodes::send($user, 'login');
+    }
+
     /** The account waiting for its second factor, or null if none / expired. */
     public static function pendingTwoFactorUser(): ?array
     {
@@ -174,7 +257,7 @@ final class Auth
     }
 
     /**
-     * Step 2: authenticator code or one-time recovery code.
+     * Step 2: authenticator code, e-mailed code or one-time recovery code.
      *
      * @return array{status: string, recovery?: bool, user?: array}
      *   status is one of: expired, invalid, locked, success
@@ -190,38 +273,39 @@ final class Auth
 
         // Check the lockout first. Otherwise an attacker who knows the password could open many
         // half-finished sign-ins and keep guessing codes in each of them after the account locks.
-        if (RateLimiter::isLoginLocked($user['username'])
-            || RateLimiter::failures('2fa', $user['username'], $s['lockout_window']) >= $s['max_login_failures_per_account']) {
+        if (self::secondFactorLocked($user['username'])) {
             AuditLog::record('login_blocked', 'Two-factor attempt while locked out', $id, $user['username']);
             return ['status' => 'locked', 'retry_after' => (int) $s['lockout_window']];
         }
 
-        $secret = Encryptor::decrypt($user['totp_secret']);
-        $lastStep = $user['totp_last_step'] !== null ? (int) $user['totp_last_step'] : null;
-        $step = $secret ? Totp::verify($secret, $code, $lastStep) : null;
-        // Claim the time step atomically: two simultaneous requests cannot both use one code.
-        if ($step !== null && !UserRepository::claimTotpStep($id, $step)) {
-            $step = null;
-        }
-        $usedRecovery = $step === null && strlen(trim($code)) > Totp::DIGITS && RecoveryCodes::consume($id, $code);
+        $valid = self::primaryCodeIsValid($user, $code, 'login');
+        $usedRecovery = !$valid && strlen(trim($code)) > Totp::DIGITS && RecoveryCodes::consume($id, $code);
 
-        if ($step !== null || $usedRecovery) {
+        if ($valid || $usedRecovery) {
             RateLimiter::record('2fa', $user['username'], true);
             self::login($user);
             AuditLog::record($usedRecovery ? 'login_success_recovery_code' : 'login_success_2fa', '', $id, $user['username']);
             return ['status' => 'success', 'recovery' => $usedRecovery, 'user' => $user];
         }
 
-        RateLimiter::record('2fa', $user['username'], false);
-        AuditLog::record('2fa_failed', 'Invalid verification code', $id, $user['username']);
+        return self::secondFactorFailed($id, $user['username']);
+    }
 
-        if (RateLimiter::failures('2fa', $user['username'], $s['lockout_window']) >= $s['max_login_failures_per_account']) {
-            // Too many wrong codes: lock the account and discard the half-finished sign-in.
-            RateLimiter::lockAccount($user['username']);
-            AuditLog::record('account_locked', 'Too many invalid two-factor codes', $id, $user['username']);
-            return ['status' => 'locked', 'retry_after' => RateLimiter::cooldownSeconds($user['username'])];
+    /**
+     * Checks a code against the account's chosen method, and uses it up.
+     * $row must be the full users row, including the encrypted secret.
+     */
+    private static function primaryCodeIsValid(array $row, string $code, string $purpose): bool
+    {
+        $id = (int) $row['id'];
+        if ($row['two_factor_method'] === 'email') {
+            return EmailCodes::verify($id, $purpose, $code);
         }
-        return ['status' => 'invalid', 'attempts_left' => $s['max_login_failures_per_account'] - RateLimiter::failures('2fa', $user['username'], $s['lockout_window'])];
+        $secret = Encryptor::decrypt($row['totp_secret']);
+        $lastStep = $row['totp_last_step'] !== null ? (int) $row['totp_last_step'] : null;
+        $step = $secret ? Totp::verify($secret, $code, $lastStep) : null;
+        // Claim the time step atomically: two simultaneous requests cannot both use one code.
+        return $step !== null && UserRepository::claimTotpStep($id, $step);
     }
 
     /**
@@ -350,13 +434,8 @@ final class Auth
     public static function verifyCurrentCode(array $user, string $code): string
     {
         $row = UserRepository::find((int) $user['id']);
-        $secret = Encryptor::decrypt($row['totp_secret'] ?? null);
-        $lastStep = $row['totp_last_step'] !== null ? (int) $row['totp_last_step'] : null;
-        $step = $secret ? Totp::verify($secret, $code, $lastStep) : null;
-        if ($step !== null && !UserRepository::claimTotpStep((int) $row['id'], $step)) {
-            $step = null;
-        }
-        if ($step !== null || (strlen(trim($code)) > Totp::DIGITS && RecoveryCodes::consume((int) $row['id'], $code))) {
+        if (self::primaryCodeIsValid($row, $code, 'account')
+            || (strlen(trim($code)) > Totp::DIGITS && RecoveryCodes::consume((int) $row['id'], $code))) {
             RateLimiter::record('2fa', $user['username'], true);
             return 'ok';
         }

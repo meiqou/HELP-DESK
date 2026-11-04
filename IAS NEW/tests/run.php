@@ -79,9 +79,16 @@ $serverEnv = array_merge(getenv(), [
     'REQUIRE_TWO_FACTOR'      => '0',
 ]);
 $server = proc_open([PHP_BINARY, '-S', "127.0.0.1:$port", '-t', "$root/public"], [1 => ['file', 'NUL', 'w'], 2 => ['file', 'NUL', 'w']], $pipes, $root, $serverEnv);
-$strictEnv = array_merge(getenv(), ['DB_NAME' => TEST_DB, 'DB_HOST' => $dbHost, 'DB_PORT' => $dbPort, 'LOCKOUT_WINDOW' => (string) SHORT_COOLDOWN]);
+// A local stand-in for the mail server: "sent" messages land in this file.
+$mailbox = sys_get_temp_dir() . '/helpdesk_test_mail_' . getmypid() . '.txt';
+$smtpServer = proc_open([PHP_BINARY, __DIR__ . '/lib/fake_smtp.php', '8767', $mailbox], [1 => ['file', 'NUL', 'w'], 2 => ['file', 'NUL', 'w']], $smtpPipes, $root);
+usleep(300000);
+$strictEnv = array_merge(getenv(), ['DB_NAME' => TEST_DB, 'DB_HOST' => $dbHost, 'DB_PORT' => $dbPort, 'LOCKOUT_WINDOW' => (string) SHORT_COOLDOWN,
+    'MAIL_HOST' => '127.0.0.1', 'MAIL_PORT' => '8767', 'MAIL_ENCRYPTION' => 'none', 'MAIL_USERNAME' => '-', 'MAIL_PASSWORD' => '-', 'MAIL_FROM' => 'helpdesk@usls.edu.ph']);
 $strictServer = proc_open([PHP_BINARY, '-S', '127.0.0.1:8766', '-t', "$root/public"], [1 => ['file', 'NUL', 'w'], 2 => ['file', 'NUL', 'w']], $strictPipes, $root, $strictEnv);
-register_shutdown_function(static function () use ($server, $strictServer) {
+register_shutdown_function(static function () use ($server, $strictServer, $smtpServer, $mailbox) {
+    proc_terminate($smtpServer);
+    @unlink($mailbox);
     proc_terminate($server);
     proc_terminate($strictServer);
 });
@@ -624,6 +631,122 @@ for ($i = 0; $i < 5; $i++) {
 $t->check('The cooldown blocks even the correct password', str_contains(login($c, 't_mfa', $pw['student'])->body, 'data-cooldown='));
 sleep(SHORT_COOLDOWN + 2);
 $t->check('After the cooldown the correct password works again', login($c, 't_mfa', $pw['student'])->status === 302);
+$db->exec('DELETE FROM auth_attempts');
+
+$t->section('QR code');
+$c = $strict();
+login($c, 't_mfa', $pw['student']);
+$db->exec('DELETE FROM auth_attempts');
+$page = $c->get('setup_2fa.php')->body;
+preg_match('/data-qr="([^"]+)"/', $page, $m);
+$qrUri = html_entity_decode($m[1] ?? '', ENT_QUOTES);
+preg_match('/id="totp-secret">([A-Z2-7 ]+)</', $page, $k);
+$t->check('The setup page gives the QR code the same key as the text', str_contains($qrUri, 'secret=' . str_replace(' ', '', $k[1] ?? 'none')) && str_starts_with($qrUri, 'otpauth://totp/'));
+$t->check('The QR library is served from this site, not an outside service', str_contains($page, 'src="assets/js/vendor/qrcode.js"') && !preg_match('/<(script|img)[^>]+src="https?:/i', $page));
+$t->check('The QR library file is reachable', $c->get('assets/js/vendor/qrcode.js')->status === 200);
+
+$t->section('E-mailed codes');
+$lastMailCode = static function () use ($mailbox): string {
+    $mail = is_file($mailbox) ? file_get_contents($mailbox) : '';
+    preg_match_all('/Your USLS IT Helpdesk code is: (\d{6})/', $mail, $found);
+    return (string) end($found[1]);
+};
+$mailCount = static fn (): int => is_file($mailbox) ? substr_count(file_get_contents($mailbox), '=====END=====') : 0;
+UserRepository::create('t_mail', 't_mail@gmail.com', PasswordHasher::hash($pw['student']), 'user', 'Mail', 'User');
+$mailId = (int) UserRepository::findByLogin('t_mail')['id'];
+$c = $strict();
+login($c, 't_mail', $pw['student']);
+$r = $c->get('setup_2fa.php?method=email');
+$t->check('E-mail is offered as a choice when a mail server is set up', str_contains($r->body, 'setup_2fa.php?method=email') && str_contains($r->body, 'Send code'));
+$t->check('The page shows only part of the address', str_contains($r->body, 't_***@gmail.com') && !str_contains($r->body, 't_mail@gmail.com'));
+$r = $c->submit('setup_2fa.php?method=email', ['action' => 'verify_email', 'code' => '123456']);
+$t->check('A guessed code fails before any code has been sent', str_contains($r->body, 'not valid') && !UserRepository::find($mailId)['totp_enabled']);
+$db->exec("DELETE FROM auth_attempts");
+$r = $c->submit('setup_2fa.php?method=email', ['action' => 'send_email']);
+$t->check('Asking for a code sends one e-mail', str_contains($r->body, 'We sent a 6-digit code') && $mailCount() === 1);
+$mailText = file_get_contents($mailbox);
+$t->check('The e-mail goes to the address on the account', str_contains($mailText, 'To: <t_mail@gmail.com>'));
+$storedHash = (string) $db->query("SELECT code_hash FROM email_codes WHERE user_id = $mailId ORDER BY id DESC LIMIT 1")->fetchColumn();
+$t->check('The code is stored only as a hash', strlen($storedHash) === 64 && !str_contains($storedHash, $lastMailCode()));
+$r = $c->submit('setup_2fa.php?method=email', ['action' => 'send_email']);
+$t->check('Asking again immediately is refused (flood protection)', str_contains($r->body, 'wait a minute') && $mailCount() === 1);
+$enrolCode = $lastMailCode();
+$other = $strict('Mozilla/5.0 OtherBrowser');
+login($other, 't_mail', $pw['student']);
+$db->exec('DELETE FROM auth_attempts');
+$r = $c->submit('setup_2fa.php?method=email', ['action' => 'verify_email', 'code' => $enrolCode]);
+$t->check('The correct code finishes setup and signs the user in', $r->status === 302 && str_contains($r->location, 'account.php') && UserRepository::find($mailId)['two_factor_method'] === 'email');
+$t->check('A second browser cannot finish the same setup with the used code', $other->submit('setup_2fa.php?method=email', ['action' => 'verify_email', 'code' => $enrolCode])->status === 302 && UserRepository::find($mailId)['totp_secret'] === null);
+preg_match_all('/<span>([0-9A-F]{6}-[0-9A-F]{6})<\/span>/', $c->get('account.php')->body, $mailRecovery);
+$t->check('Recovery codes are shown after e-mail setup too', count($mailRecovery[1]) === 8);
+$t->check('The account page names the e-mail method', str_contains($c->get('account.php')->body, 'Codes sent to t_***@gmail.com'));
+
+$c = $strict();
+$before = $mailCount();
+$r = login($c, 't_mail', $pw['student']);
+$t->check('Signing in straight after setup still e-mails a code and asks for it', str_ends_with($r->location, 'verify_2fa.php') && $mailCount() === $before + 1 && str_contains($c->get('verify_2fa.php')->body, 't_***@gmail.com'));
+$t->check('Protected pages stay locked until the code is entered', $c->get('dashboard.php')->status === 302);
+$t->check('A wrong code is refused and shows attempts left', str_contains($c->submit('verify_2fa.php', ['code' => $lastMailCode() === '000000' ? '111111' : '000000'])->body, 'attempts left'));
+$goodCode = $lastMailCode();
+$r = $c->submit('verify_2fa.php', ['code' => $goodCode]);
+$t->check('The correct code signs in', $r->status === 302 && str_ends_with($r->location, 'dashboard.php'));
+$c2 = $strict();
+$before = $mailCount();
+$r = login($c2, 't_mail', $pw['student']);
+$t->check('Signing in again within a minute sends no extra e-mail and shows no error', $mailCount() === $before && !str_contains($c2->get('verify_2fa.php')->body, 'wait a minute'));
+$db->exec("UPDATE email_codes SET created_at = created_at - INTERVAL 2 MINUTE WHERE user_id = $mailId");
+$c2 = $strict();
+login($c2, 't_mail', $pw['student']);
+$t->check('A used code cannot be replayed', $goodCode === $lastMailCode() || $c2->submit('verify_2fa.php', ['code' => $goodCode])->status === 200);
+$expiredCode = $lastMailCode();
+$db->exec("UPDATE email_codes SET expires_at = NOW() - INTERVAL 1 SECOND WHERE user_id = $mailId");
+$t->check('An expired code is refused', $c2->submit('verify_2fa.php', ['code' => $expiredCode])->status === 200);
+$db->exec('DELETE FROM auth_attempts');
+$db->exec("UPDATE email_codes SET created_at = created_at - INTERVAL 2 MINUTE WHERE user_id = $mailId");
+$r = $c2->submit('verify_2fa.php', ['action' => 'resend']);
+$firstResend = $lastMailCode();
+$db->exec("UPDATE email_codes SET created_at = created_at - INTERVAL 2 MINUTE WHERE user_id = $mailId");
+$c2->submit('verify_2fa.php', ['action' => 'resend']);
+$t->check('Asking for a new code sends another e-mail', str_contains($r->body, 'sent a new code'));
+$secondResend = $lastMailCode();
+if ($firstResend !== $secondResend) {
+    $t->check('A new code cancels the previous one', $c2->submit('verify_2fa.php', ['code' => $firstResend])->status === 200);
+}
+$db->exec('DELETE FROM auth_attempts');
+$t->check('A recovery code works in place of an e-mailed code', $c2->submit('verify_2fa.php', ['code' => $mailRecovery[1][0]])->status === 302);
+
+// Flood and guessing limits
+$db->exec("DELETE FROM email_codes WHERE user_id = $mailId");
+$db->exec("INSERT INTO email_codes (user_id, purpose, code_hash, expires_at, used_at, created_at) SELECT $mailId, 'login', REPEAT('0', 64), NOW(), NOW(), NOW() - INTERVAL 10 MINUTE FROM (SELECT 1 UNION SELECT 2 UNION SELECT 3 UNION SELECT 4 UNION SELECT 5) AS five");
+$before = $mailCount();
+$c3 = $strict();
+login($c3, 't_mail', $pw['student']);
+$t->check('At most 5 e-mails an hour are sent', $mailCount() === $before && str_contains($c3->get('verify_2fa.php')->body, 'Too many codes'));
+$db->exec("DELETE FROM email_codes WHERE user_id = $mailId");
+$db->exec('DELETE FROM auth_attempts');
+$c4 = $strict();
+login($c4, 't_mail', $pw['student']);
+for ($i = 0; $i < 5; $i++) {
+    $r = $c4->submit('verify_2fa.php', ['code' => $lastMailCode() === sprintf('%06d', 200000 + $i) ? '000000' : sprintf('%06d', 200000 + $i)]);
+}
+$t->check('Five wrong e-mailed codes lock the account', $r->status === 302 && str_ends_with($r->location, 'login.php') && str_contains(login($strict(), 't_mail', $pw['student'])->body, 'data-cooldown='));
+$db->exec('DELETE FROM auth_attempts');
+
+// Changing method needs a code as well as the password
+$db->exec("DELETE FROM email_codes WHERE user_id = $mailId");
+$c5 = $strict();
+login($c5, 't_mail', $pw['student']);
+$c5->submit('verify_2fa.php', ['code' => $lastMailCode()]);
+$db->exec("UPDATE email_codes SET created_at = created_at - INTERVAL 2 MINUTE WHERE user_id = $mailId");
+$r = $c5->submit('account.php', ['action' => '2fa_send_code']);
+$accountCode = $lastMailCode();
+$r = $c5->submit('account.php', ['action' => '2fa_disable', 'current_password' => $pw['student'], 'code' => '']);
+$t->check('Changing method without a code is refused', str_contains($r->body, 'not valid') && (bool) UserRepository::find($mailId)['totp_enabled']);
+$r = $c5->submit('account.php', ['action' => '2fa_disable', 'current_password' => $pw['student'], 'code' => $accountCode]);
+$t->check('Changing method with the e-mailed code signs out and resets the choice', $r->status === 302 && !UserRepository::find($mailId)['totp_enabled'] && UserRepository::find($mailId)['two_factor_method'] === 'totp');
+$t->check('The user must choose a method again', str_ends_with(login($strict(), 't_mail', $pw['student'])->location, 'setup_2fa.php'));
+
+$t->check('Header injection through the address is impossible', !App\Core\Mailer::send("a@b.com\r\nBcc: x@y.com", 's', 'b'));
 $db->exec('DELETE FROM auth_attempts');
 
 $t->section('Information leakage');

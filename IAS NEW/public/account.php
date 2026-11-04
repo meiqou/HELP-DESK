@@ -2,6 +2,7 @@
 require dirname(__DIR__) . '/src/bootstrap.php';
 
 use App\Auth\Auth;
+use App\Auth\EmailCodes;
 use App\Auth\RecoveryCodes;
 use App\Auth\Registration;
 use App\Core\Config;
@@ -114,11 +115,25 @@ if (is_post()) {
             UserRepository::disableTotp($userId, $twoFactorRequired);
             AuditLog::record('2fa_disabled');
             if ($twoFactorRequired) {
-                Auth::logout('Your old device was removed. Sign in again to link your new one.');
+                Auth::logout('Your two-factor setup was removed. Sign in again to choose your new one.');
                 redirect('login.php');
             }
             flash('warning', 'Two-factor authentication has been turned off. Your account is now protected by your password only.');
             redirect('account.php#two-factor');
+
+        case '2fa_send_code':
+            // An account using e-mail codes needs a code to move to another device or method.
+            $section = '2fa';
+            if ($user['two_factor_method'] !== 'email') {
+                break;
+            }
+            $status = EmailCodes::send($user, 'account');
+            if ($status === 'sent') {
+                flash('success', 'We sent a code to ' . EmailCodes::mask($user['email']) . '.');
+                redirect('account.php#two-factor');
+            }
+            $errors[] = EmailCodes::message($status);
+            break;
 
         case '2fa_new_codes':
             $section = '2fa';
@@ -164,6 +179,8 @@ view('account', [
     'section'        => $section,
     'totpEnabled'    => (bool) $fresh['totp_enabled'],
     'twoFactorRequired' => $twoFactorRequired,
+    'twoFactorMethod' => $fresh['two_factor_method'],
+    'loadQr'         => !empty($_SESSION['pending_totp_secret']),
     'pendingSecret'  => $_SESSION['pending_totp_secret'] ?? null,
     'newCodes'       => $newCodes,
     'remainingCodes' => RecoveryCodes::remaining($userId),

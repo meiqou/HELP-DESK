@@ -8,6 +8,9 @@
 
 $env = static fn (string $key, $default) => getenv($key) !== false && getenv($key) !== '' ? getenv($key) : $default;
 
+// Mail account settings live in config/mail.local.php, which is never committed.
+$mail = is_file(__DIR__ . '/mail.local.php') ? require __DIR__ . '/mail.local.php' : [];
+
 return [
     'app' => [
         'name'     => 'USLS IT Helpdesk',
@@ -17,10 +20,21 @@ return [
     'db' => [
         'host'    => $env('DB_HOST', 'localhost'),
         'port'    => $env('DB_PORT', '3306'),
-        'name'    => $env('DB_NAME', ''),
+        'name'    => $env('DB_NAME', 'usls_helpdesk'),
         'user'    => $env('DB_USER', 'root'),
         'pass'    => $env('DB_PASS', ''),
         'charset' => 'utf8mb4',
+    ],
+
+    // Used to e-mail sign-in codes. Without a host, the e-mail option is simply not offered.
+    'mail' => [
+        'host'       => $env('MAIL_HOST', $mail['host'] ?? ''),
+        'port'       => (int) $env('MAIL_PORT', $mail['port'] ?? 587),
+        'encryption' => $env('MAIL_ENCRYPTION', $mail['encryption'] ?? 'tls'),   // tls, ssl or none
+        'username'   => $env('MAIL_USERNAME', $mail['username'] ?? ''),
+        'password'   => $env('MAIL_PASSWORD', $mail['password'] ?? ''),
+        'from'       => $env('MAIL_FROM', $mail['from'] ?? ($mail['username'] ?? '')),
+        'from_name'  => $env('MAIL_FROM_NAME', $mail['from_name'] ?? 'USLS IT Helpdesk'),
     ],
 
     'session' => [

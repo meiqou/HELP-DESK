@@ -84,7 +84,15 @@
             <?php endif; ?>
 
             <?php if ($totpEnabled): ?>
+                <p class="small">Method: <strong><?= $twoFactorMethod === 'email' ? 'Codes sent to ' . e(App\Auth\EmailCodes::mask($user['email'])) : 'Authenticator app' ?></strong></p>
                 <p class="small">Recovery codes remaining: <strong><?= (int) $remainingCodes ?></strong> of 8</p>
+                <?php if ($twoFactorMethod === 'email'): ?>
+                    <form method="POST" class="mt-1">
+                        <?= csrf_field() ?>
+                        <input type="hidden" name="action" value="2fa_send_code">
+                        <button type="submit" class="btn btn-secondary btn-sm" data-no-lock>E-mail me a code</button>
+                    </form>
+                <?php endif; ?>
                 <div class="grid grid-2 mt-3">
                     <form method="POST" class="form-stack">
                         <?= csrf_field() ?>
@@ -95,7 +103,7 @@
                         </div>
                         <button type="submit" class="btn btn-secondary">Generate new recovery codes</button>
                     </form>
-                    <form method="POST" class="form-stack" data-confirm="<?= $twoFactorRequired ? 'Remove your current device? You will be signed out and must link a new one.' : 'Turn off two-factor authentication?' ?>">
+                    <form method="POST" class="form-stack" data-confirm="<?= $twoFactorRequired ? 'Remove your current two-factor setup? You will be signed out and must choose a new one.' : 'Turn off two-factor authentication?' ?>">
                         <?= csrf_field() ?>
                         <input type="hidden" name="action" value="2fa_disable">
                         <div class="field">
@@ -103,17 +111,18 @@
                             <input class="input" type="password" id="pw_disable" name="current_password" autocomplete="current-password" required>
                         </div>
                         <div class="field">
-                            <label for="code_disable">Authenticator or recovery code</label>
+                            <label for="code_disable"><?= $twoFactorMethod === 'email' ? 'E-mailed or recovery code' : 'Authenticator or recovery code' ?></label>
                             <input class="input" type="text" id="code_disable" name="code" inputmode="numeric" autocomplete="one-time-code" maxlength="13" required>
                         </div>
-                        <button type="submit" class="btn btn-danger"><?= $twoFactorRequired ? 'Move to a new device' : 'Turn off two-factor' ?></button>
+                        <button type="submit" class="btn btn-danger"><?= $twoFactorRequired ? 'Change device or method' : 'Turn off two-factor' ?></button>
                     </form>
                 </div>
             <?php elseif ($pendingSecret): ?>
                 <ol class="steps">
                     <li>
                         <p><strong>Add this account to your authenticator app.</strong></p>
-                        <p class="muted small">Choose &ldquo;Enter a setup key&rdquo;, use <em>USLS IT Helpdesk</em> as the name, and paste this key (time-based):</p>
+                        <div class="qr-box mt-1" data-qr="<?= e(App\Security\Totp::uri($pendingSecret, $user['username'])) ?>" role="img" aria-label="QR code for your authenticator app"></div>
+                        <p class="muted small mt-1">Scan the QR code. If you can&rsquo;t, choose &ldquo;Enter a setup key&rdquo;, use <em>USLS IT Helpdesk</em> as the name, and paste this key (time-based):</p>
                         <p class="secret-key mt-1" id="totp-secret"><?= e(trim(chunk_split($pendingSecret, 4, ' '))) ?></p>
                         <div class="actions mt-1">
                             <button type="button" class="btn btn-secondary btn-sm" data-copy="#totp-secret">Copy key</button>

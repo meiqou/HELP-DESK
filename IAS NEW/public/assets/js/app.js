@@ -163,6 +163,38 @@
         });
     });
 
+    // QR code for authenticator apps: <div data-qr="otpauth://...">. It is drawn here in the
+    // browser, so the secret key is never sent to an outside QR service.
+    document.querySelectorAll('[data-qr]').forEach(function (box) {
+        if (typeof qrcode !== 'function') return;   // the setup key is still shown as text
+        var qr = qrcode(0, 'M');
+        qr.addData(box.getAttribute('data-qr'));
+        qr.make();
+        var size = qr.getModuleCount();
+        var quiet = 4;   // scanners need an empty margin around the code
+        var path = '';
+        for (var row = 0; row < size; row++) {
+            for (var col = 0; col < size; col++) {
+                if (qr.isDark(row, col)) path += 'M' + (col + quiet) + ' ' + (row + quiet) + 'h1v1h-1z';
+            }
+        }
+        var ns = 'http://www.w3.org/2000/svg';
+        var total = size + quiet * 2;
+        var svg = document.createElementNS(ns, 'svg');
+        svg.setAttribute('viewBox', '0 0 ' + total + ' ' + total);
+        svg.setAttribute('shape-rendering', 'crispEdges');
+        var background = document.createElementNS(ns, 'rect');
+        background.setAttribute('width', total);
+        background.setAttribute('height', total);
+        background.setAttribute('fill', '#ffffff');
+        var modules = document.createElementNS(ns, 'path');
+        modules.setAttribute('d', path);
+        modules.setAttribute('fill', '#000000');
+        svg.appendChild(background);
+        svg.appendChild(modules);
+        box.appendChild(svg);
+    });
+
     // Copy to clipboard: <button data-copy="#element">
     document.querySelectorAll('[data-copy]').forEach(function (button) {
         button.addEventListener('click', function () {

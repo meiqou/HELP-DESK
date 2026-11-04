@@ -46,6 +46,7 @@ if ($navUser) {
     <title><?= isset($pageTitle) ? e($pageTitle) . ' · ' : '' ?>USLS IT Helpdesk</title>
     <link rel="icon" href="assets/img/star.svg" type="image/svg+xml">
     <link rel="stylesheet" href="assets/css/app.css">
+    <?php if (!empty($loadQr)): ?><script src="assets/js/vendor/qrcode.js" defer></script><?php endif; ?>
     <script src="assets/js/app.js" defer></script>
 </head>
 <body class="layout-<?= e($layout) ?>">

@@ -5,7 +5,7 @@
 
 A helpdesk portal for the University of St. La Salle where students, faculty and staff file IT support
 tickets, IT technicians resolve them, and administrators manage accounts. Security is built into every request,
-and an automated test suite of 178 checks proves that every control works.
+and an automated test suite of 208 checks proves that every control works.
 
 ---
 
@@ -22,8 +22,10 @@ and an automated test suite of 178 checks proves that every control works.
    cd C:\xampp\htdocs\helpdesk
    C:\xampp\php\php.exe setup\create_admin.php
    ```
-5. Visit `http://localhost/helpdesk/` and sign in. Every account, including the administrator, must link an
-   authenticator app at its first sign-in, so have Google or Microsoft Authenticator ready on a phone.
+5. Visit `http://localhost/helpdesk/` and sign in. Every account, including the administrator, must set up a
+   second step at its first sign-in, so have Google or Microsoft Authenticator ready on a phone.
+6. Optional: to also offer sign-in codes by e-mail, copy `config/mail.example.php` to `config/mail.local.php` and
+   fill in a mail account. For Gmail this needs an App Password. Until then, only the authenticator app is offered.
 
 Only the `public/` folder is served. The `.htaccess` in the project root routes every request into it, so
 the source code, configuration and secret keys can never be downloaded. On a production server, point the
@@ -45,7 +47,7 @@ C:\xampp\php\php.exe tests\run.php
 ```
 
 The suite creates its own throwaway database (`usls_helpdesk_test`), starts its own web server, and runs
-178 checks: unit tests of the security classes plus end-to-end attacks over real HTTP (CSRF, SQL injection,
+208 checks: unit tests of the security classes plus end-to-end attacks over real HTTP (CSRF, SQL injection,
 XSS, IDOR, session fixation, session hijacking, brute force, password spraying, replayed 2FA codes, parallel
 2FA guessing, timing-based user enumeration, hostile input, open redirects, log tampering and more). It prints PASS or FAIL for each check and exits with an error code if
 anything fails. Your real database is never touched. The latest results are saved to `tests/last-run.json`.
@@ -94,7 +96,7 @@ each security class can be tested on its own.
 | Control | How it works |
 |---|---|
 | Attempts left and cooldown | Each failed sign-in shows how many attempts remain. 5 failed attempts per account, or 50 per IP address (generous because a campus shares one public IP), start a 15-minute cooldown with a live countdown. It works the same for usernames that do not exist, and a wrong password and an unknown username take the same time to answer (no account enumeration). |
-| Required two-factor authentication (TOTP) | Every account must link an authenticator app before it can reach anything; until then it stays fully signed out. 6-digit codes from Google or Microsoft Authenticator (RFC 6238, verified against the official test vectors). The secret is encrypted with AES-256-GCM; a code can never be used twice, even by two requests at the same moment. The lockout is checked before every code, so opening many sign-in sessions gives no extra guesses. Moving to a new device requires the password and a current code, then signs the user out to link the new one. |
+| Required two-factor authentication (TOTP) | Every account must set up a second step before it can reach anything; until then it stays fully signed out. Users choose an authenticator app (scan a QR code, drawn in the browser so the key never reaches an outside service) or codes e-mailed to their account's address (stored hashed, single use, valid 10 minutes, limited to 5 sends an hour). 6-digit codes from Google or Microsoft Authenticator (RFC 6238, verified against the official test vectors). The secret is encrypted with AES-256-GCM; a code can never be used twice, even by two requests at the same moment. The lockout is checked before every code, so opening many sign-in sessions gives no extra guesses. Moving to a new device requires the password and a current code, then signs the user out to link the new one. |
 | Recovery codes | 8 single-use codes, stored hashed like passwords, shown only once. |
 | Session fixation defence | The session ID is replaced on sign-in, on 2FA completion and every 10 minutes; IDs the server did not create are refused. |
 | Hardened cookies | `HttpOnly`, `SameSite=Strict`, `Secure` on HTTPS, never placed in URLs. |
@@ -139,7 +141,7 @@ each security class can be tested on its own.
 
 ## 5. Suggested demo for the presentation
 
-1. Run `php tests\run.php` and show 178 of 178 checks passing.
+1. Run `php tests\run.php` and show 208 of 208 checks passing.
 2. Register with `password123`: the policy rejects it. Register with a strong password: the meter turns green.
 3. Enter a wrong password and watch the attempts-left count; on the fifth, the cooldown timer starts. A non-existent username behaves the same.
 4. In phpMyAdmin, show the `users.password` column: `$argon2id$...` hashes, no plain text.
@@ -188,7 +190,7 @@ IAS NEW/
 │   ├── admin_tickets.php      Ticket queue
 │   ├── manage_users.php       Roles, deactivation, lockouts, 2FA reset (admin)
 │   ├── audit_log.php          Audit trail and integrity check (admin)
-│   └── assets/                CSS, JavaScript, images
+│   └── assets/                CSS, JavaScript (including the bundled qrcode-generator library, MIT), images
 ├── src/
 │   ├── bootstrap.php          Autoloader, configuration, headers, session
 │   ├── helpers.php            e(), view(), icon() and other small helpers
