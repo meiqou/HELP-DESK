@@ -8,8 +8,8 @@
 --   CLI:        mysql -u root < database/schema.sql
 -- =========================================================================
 
-CREATE DATABASE IF NOT EXISTS secure_system CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-USE secure_system;
+CREATE DATABASE IF NOT EXISTS usls_helpdesk CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+USE usls_helpdesk;
 
 -- -------------------------------------------------------------------------
 -- Users
@@ -135,10 +135,10 @@ CREATE TABLE IF NOT EXISTS audit_log (
 -- Uncomment, choose a strong password, then set DB_USER / DB_PASS.
 -- -------------------------------------------------------------------------
 -- CREATE USER IF NOT EXISTS 'helpdesk_app'@'localhost' IDENTIFIED BY 'change-this-strong-password';
--- GRANT SELECT, INSERT, UPDATE, DELETE ON secure_system.users          TO 'helpdesk_app'@'localhost';
--- GRANT SELECT, INSERT, UPDATE, DELETE ON secure_system.tickets        TO 'helpdesk_app'@'localhost';
--- GRANT SELECT, INSERT, UPDATE, DELETE ON secure_system.auth_attempts  TO 'helpdesk_app'@'localhost';
--- GRANT SELECT, INSERT, UPDATE, DELETE ON secure_system.recovery_codes TO 'helpdesk_app'@'localhost';
--- GRANT SELECT, INSERT                 ON secure_system.audit_log      TO 'helpdesk_app'@'localhost';
--- GRANT LOCK TABLES                    ON secure_system.*              TO 'helpdesk_app'@'localhost';
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON usls_helpdesk.users          TO 'helpdesk_app'@'localhost';
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON usls_helpdesk.tickets        TO 'helpdesk_app'@'localhost';
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON usls_helpdesk.auth_attempts  TO 'helpdesk_app'@'localhost';
+-- GRANT SELECT, INSERT, UPDATE, DELETE ON usls_helpdesk.recovery_codes TO 'helpdesk_app'@'localhost';
+-- GRANT SELECT, INSERT                 ON usls_helpdesk.audit_log      TO 'helpdesk_app'@'localhost';
+-- GRANT LOCK TABLES                    ON usls_helpdesk.*              TO 'helpdesk_app'@'localhost';
 -- FLUSH PRIVILEGES;

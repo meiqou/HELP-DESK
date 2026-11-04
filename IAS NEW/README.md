@@ -14,7 +14,7 @@ and an automated test suite of 178 checks proves that every control works.
 1. Copy the `IAS NEW` folder into `C:\xampp\htdocs\` (for example as `C:\xampp\htdocs\helpdesk`).
 2. Start **Apache** and **MySQL** in the XAMPP Control Panel.
 3. Open phpMyAdmin, choose **Import**, select `database/schema.sql` and press **Go**.
-   This creates the `secure_system` database. If you already have the database from the old version,
+   This creates the `usls_helpdesk` database. If you already have the database from the old version,
    the script upgrades the tables in place without deleting any data. Import it again after updating the
    project, because new versions can add columns.
 4. Create the first administrator from a terminal (the script refuses to run in a browser):
@@ -44,7 +44,7 @@ Database credentials can be set with environment variables (`DB_HOST`, `DB_PORT`
 C:\xampp\php\php.exe tests\run.php
 ```
 
-The suite creates its own throwaway database (`secure_system_test`), starts its own web server, and runs
+The suite creates its own throwaway database (`usls_helpdesk_test`), starts its own web server, and runs
 178 checks: unit tests of the security classes plus end-to-end attacks over real HTTP (CSRF, SQL injection,
 XSS, IDOR, session fixation, session hijacking, brute force, password spraying, replayed 2FA codes, parallel
 2FA guessing, timing-based user enumeration, hostile input, open redirects, log tampering and more). It prints PASS or FAIL for each check and exits with an error code if

@@ -5,7 +5,7 @@
  *   php tests/run.php
  *
  * What it does:
- *   1. Creates a separate, throwaway database (secure_system_test) from database/schema.sql.
+ *   1. Creates a separate, throwaway database (usls_helpdesk_test) from database/schema.sql.
  *   2. Starts its own PHP web server on a free port with shortened timeouts.
  *   3. Runs unit tests on the security classes and end-to-end tests over real HTTP.
  *   4. Prints a PASS/FAIL report and exits with code 1 if anything failed.
@@ -19,7 +19,7 @@ if (PHP_SAPI !== 'cli') {
     exit();
 }
 
-const TEST_DB = 'secure_system_test';
+const TEST_DB = 'usls_helpdesk_test';
 const IDLE_TIMEOUT = 15;    // seconds, so the idle-timeout test runs quickly
 const REAUTH_WINDOW = 10;   // seconds, so the step-up test runs quickly
 const MAX_REGISTRATIONS = 6;
@@ -39,7 +39,7 @@ $dbPass = getenv('DB_PASS') ?: '';
 
 $admin = new PDO("mysql:host=$dbHost;port=$dbPort;charset=utf8mb4", $dbUser, $dbPass, [PDO::ATTR_ERRMODE => PDO::ERRMODE_EXCEPTION]);
 $admin->exec('DROP DATABASE IF EXISTS ' . TEST_DB);
-$sql = str_replace('secure_system', TEST_DB, file_get_contents("$root/database/schema.sql"));
+$sql = str_replace('usls_helpdesk', TEST_DB, file_get_contents("$root/database/schema.sql"));
 $sql = preg_replace('/^\s*--.*$/m', '', $sql);
 foreach (preg_split('/;\s*\n/', $sql) as $statement) {
     if (trim($statement) !== '') {
