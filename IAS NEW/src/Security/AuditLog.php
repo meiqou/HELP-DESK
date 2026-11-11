@@ -156,7 +156,7 @@ final class AuditLog
     {
         $stmt = Database::connection()->prepare(
             "SELECT event, ip, created_at FROM audit_log
-             WHERE user_id = ? AND event IN ('login_success', 'login_success_2fa', 'login_success_recovery_code', 'login_failed', 'password_changed', '2fa_enabled', '2fa_disabled')
+             WHERE user_id = ? AND event IN ('login_success', 'login_success_2fa', 'login_success_recovery_code', 'login_failed', 'password_changed', 'password_reset', '2fa_enabled', '2fa_disabled')
              ORDER BY id DESC LIMIT " . (int) $limit
         );
         $stmt->execute([$userId]);

@@ -117,7 +117,7 @@ CREATE TABLE IF NOT EXISTS recovery_codes (
 CREATE TABLE IF NOT EXISTS email_codes (
     id         BIGINT NOT NULL AUTO_INCREMENT,
     user_id    INT NOT NULL,
-    purpose    VARCHAR(10) NOT NULL,   -- login, enrol or account
+    purpose    VARCHAR(10) NOT NULL,   -- login, enrol, account or reset
     code_hash  CHAR(64) NOT NULL,
     expires_at DATETIME NOT NULL,
     used_at    DATETIME NULL,

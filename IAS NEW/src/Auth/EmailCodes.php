@@ -8,7 +8,7 @@ use App\Security\AuditLog;
 use App\Security\Secrets;
 
 /**
- * One-time sign-in codes sent to the account's e-mail address.
+ * One-time codes sent to the account's e-mail address.
  * Codes are stored only as keyed hashes, work once and expire after 10 minutes. Wrong guesses are
  * limited by the same two-factor lockout as authenticator codes, and sending is limited to
  * prevent e-mail flooding.
@@ -51,7 +51,10 @@ final class EmailCodes
             ->execute([$id, $purpose, self::hash($id, $purpose, $code), self::TTL_SECONDS]);
         $rowId = (int) $pdo->lastInsertId();
 
-        if (!Mailer::send($user['email'], 'Your USLS IT Helpdesk code: ' . $code, self::body($code))) {
+        $subject = $purpose === 'reset'
+            ? 'Your USLS IT Helpdesk password reset code'
+            : 'Your USLS IT Helpdesk code: ' . $code;
+        if (!Mailer::send($user['email'], $subject, self::body($code, $purpose))) {
             // Not delivered: remove it so a mail outage does not use up the sending limit.
             $pdo->prepare('DELETE FROM email_codes WHERE id = ?')->execute([$rowId]);
             AuditLog::record('email_code_failed', 'The mail server did not accept the message', $id, $user['username']);
@@ -108,9 +111,14 @@ final class EmailCodes
         return hash_hmac('sha256', "{$userId}|{$purpose}|{$code}", Secrets::get('pepper'));
     }
 
-    private static function body(string $code): string
+    private static function body(string $code, string $purpose): string
     {
         $minutes = (int) (self::TTL_SECONDS / 60);
+        if ($purpose === 'reset') {
+            return "Your USLS IT Helpdesk password reset code is: {$code}\n\n"
+                . "It expires in {$minutes} minutes and works once. IT Services will never ask you for this code.\n\n"
+                . "If you did not request a password reset, you can ignore this message. Your password has not been changed.\n";
+        }
         return "Your USLS IT Helpdesk code is: {$code}\n\n"
             . "It expires in {$minutes} minutes and works once. IT Services will never ask you for this code.\n\n"
             . "If you did not just try to sign in, someone may know your password. Please change it.\n";

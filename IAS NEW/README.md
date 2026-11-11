@@ -25,7 +25,8 @@ and an automated test suite of 208 checks proves that every control works.
 5. Visit `http://localhost/helpdesk/` and sign in. Every account, including the administrator, must set up a
    second step at its first sign-in, so have Google or Microsoft Authenticator ready on a phone.
 6. Optional: to also offer sign-in codes by e-mail, copy `config/mail.example.php` to `config/mail.local.php` and
-   fill in a mail account. For Gmail this needs an App Password. Until then, only the authenticator app is offered.
+   fill in a mail account. For Gmail this needs an App Password. These settings also send password-reset codes
+   from the **Forgot password?** link on the sign-in page.
 
 Only the `public/` folder is served. The `.htaccess` in the project root routes every request into it, so
 the source code, configuration and secret keys can never be downloaded. On a production server, point the

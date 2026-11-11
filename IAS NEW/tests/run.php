@@ -648,10 +648,44 @@ $t->check('The QR library file is reachable', $c->get('assets/js/vendor/qrcode.j
 $t->section('E-mailed codes');
 $lastMailCode = static function () use ($mailbox): string {
     $mail = is_file($mailbox) ? file_get_contents($mailbox) : '';
-    preg_match_all('/Your USLS IT Helpdesk code is: (\d{6})/', $mail, $found);
+    preg_match_all('/Your USLS IT Helpdesk (?:password reset )?code is: (\d{6})/', $mail, $found);
     return (string) end($found[1]);
 };
 $mailCount = static fn (): int => is_file($mailbox) ? substr_count(file_get_contents($mailbox), '=====END=====') : 0;
+
+$t->check('The sign-in page links to password recovery', str_contains($client()->get('login.php')->body, 'href="forgot_password.php">Forgot password?</a>'));
+$resetId = UserRepository::create('t_reset', 't_reset@gmail.com', PasswordHasher::hash($pw['student']), 'user', 'Reset', 'User');
+$resetUser = $strict();
+$mailBeforeReset = $mailCount();
+$r = $resetUser->submit('forgot_password.php', ['action' => 'request_code', 'email' => 't_reset@gmail.com']);
+$resetCode = $lastMailCode();
+$t->check('Password recovery sends a code and does not reveal whether the address exists', str_contains($r->body, 'If an account exists') && $mailCount() === $mailBeforeReset + 1);
+$t->check('Password reset codes are sent to the account e-mail', str_contains(file_get_contents($mailbox), 'To: <t_reset@gmail.com>') && $resetCode !== '');
+$resetHash = (string) $db->query("SELECT code_hash FROM email_codes WHERE user_id = $resetId AND purpose = 'reset' ORDER BY id DESC LIMIT 1")->fetchColumn();
+$t->check('Password reset codes are stored as hashes', strlen($resetHash) === 64 && !str_contains($resetHash, $resetCode));
+$versionBeforeReset = (int) UserRepository::find($resetId)['session_version'];
+$r = $resetUser->submit('forgot_password.php', ['action' => 'reset_password', 'code' => '000000' === $resetCode ? '000001' : '000000', 'new_password' => 'Reset#NewPass2026', 'confirm_password' => 'Reset#NewPass2026']);
+$t->check('An incorrect reset code is rejected', str_contains($r->body, 'invalid or expired'));
+$r = $resetUser->submit('forgot_password.php', ['action' => 'reset_password', 'code' => $resetCode, 'new_password' => 'Reset#NewPass2026', 'confirm_password' => 'Reset#NewPass2026']);
+$t->check('A valid code resets the password and returns to sign-in', $r->status === 302 && str_ends_with($r->location, 'login.php')
+    && PasswordHasher::verify('Reset#NewPass2026', UserRepository::passwordHash($resetId))[0]
+    && (int) UserRepository::find($resetId)['session_version'] === $versionBeforeReset + 1);
+$t->check('The reset password works and the old password no longer works', login($client(), 't_reset', 'Reset#NewPass2026')->status === 302
+    && str_contains(login($client(), 't_reset', $pw['student'])->body, 'Incorrect username or password'));
+
+$limitedResetId = UserRepository::create('t_reset_limit', 't_reset_limit@gmail.com', PasswordHasher::hash($pw['student']), 'user');
+$limitedReset = $strict();
+$limitedReset->submit('forgot_password.php', ['action' => 'request_code', 'email' => 't_reset_limit@gmail.com']);
+$limitedResetCode = $lastMailCode();
+$r = null;
+for ($i = 0; $i < 5; $i++) {
+    $wrongCode = $limitedResetCode === sprintf('%06d', 300000 + $i) ? '000000' : sprintf('%06d', 300000 + $i);
+    $r = $limitedReset->submit('forgot_password.php', ['action' => 'reset_password', 'code' => $wrongCode, 'new_password' => 'Reset#OtherPass2026', 'confirm_password' => 'Reset#OtherPass2026']);
+}
+$r = $limitedReset->submit('forgot_password.php', ['action' => 'reset_password', 'code' => $limitedResetCode, 'new_password' => 'Reset#OtherPass2026', 'confirm_password' => 'Reset#OtherPass2026']);
+$t->check('Five incorrect reset codes lock further reset attempts', str_contains($r->body, 'Too many verification attempts')
+    && !PasswordHasher::verify('Reset#OtherPass2026', UserRepository::passwordHash($limitedResetId))[0]);
+
 UserRepository::create('t_mail', 't_mail@gmail.com', PasswordHasher::hash($pw['student']), 'user', 'Mail', 'User');
 $mailId = (int) UserRepository::findByLogin('t_mail')['id'];
 $c = $strict();

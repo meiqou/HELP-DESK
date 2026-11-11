@@ -40,18 +40,24 @@
     });
 
     // Passwords cannot be copied, cut, pasted or dragged (also while shown as text).
+    var clipboardNote;
+    var clipboardNoteTimer;
     document.querySelectorAll('input[type="password"]').forEach(function (input) {
         ['copy', 'cut', 'paste', 'drop', 'dragstart'].forEach(function (type) {
             input.addEventListener(type, function (event) {
                 event.preventDefault();
-                var note = input.parentNode.querySelector('.clipboard-note');
-                if (!note) {
-                    note = document.createElement('p');
-                    note.className = 'hint clipboard-note';
-                    note.setAttribute('role', 'status');
-                    note.textContent = 'For security, copy and paste is turned off for passwords. Please type it.';
-                    (input.closest('.password-wrap') || input).insertAdjacentElement('afterend', note);
+                if (!clipboardNote) {
+                    clipboardNote = document.createElement('p');
+                    clipboardNote.className = 'hint clipboard-note';
+                    clipboardNote.setAttribute('role', 'status');
+                    document.body.appendChild(clipboardNote);
                 }
+                clipboardNote.textContent = 'Pasting disabled for security. Please type your password.';
+                clipboardNote.classList.add('is-visible');
+                window.clearTimeout(clipboardNoteTimer);
+                clipboardNoteTimer = window.setTimeout(function () {
+                    clipboardNote.classList.remove('is-visible');
+                }, 2500);
             });
         });
     });
@@ -103,10 +109,15 @@
         };
         // The same list the server checks (PasswordPolicy::COMMON).
         var common = JSON.parse(input.getAttribute('data-common') || 'null');
+        var commonWarning = container.querySelector('.password-common-warning');
+        var isCommon = function (v) {
+            if (!common || !v) return false;
+            var lower = v.toLowerCase();
+            return common.indexOf(lower) !== -1 || common.indexOf(lower.replace(/[^a-z]/g, '')) !== -1;
+        };
         if (common) {
             rules.common = function (v) {
-                var lower = v.toLowerCase();
-                return v.length > 0 && common.indexOf(lower) === -1 && common.indexOf(lower.replace(/[^a-z]/g, '')) === -1;
+                return v.length > 0 && !isCommon(v);
             };
         }
         var ruleCount = Object.keys(rules).length;
@@ -114,6 +125,7 @@
 
         input.addEventListener('input', function () {
             var v = input.value;
+            if (commonWarning) commonWarning.hidden = !isCommon(v);
             var met = 0;
             Object.keys(rules).forEach(function (key) {
                 var ok = rules[key](v);

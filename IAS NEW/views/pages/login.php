@@ -28,6 +28,7 @@
         </div>
     </div>
 
+    <p class="auth-switch"><a href="forgot_password.php">Forgot password?</a></p>
     <button type="submit" class="btn btn-primary btn-block">Sign in</button>
 </form>
 

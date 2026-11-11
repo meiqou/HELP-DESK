@@ -49,7 +49,7 @@
                         <li data-rule="symbol">Symbol</li>
                         <li data-rule="common">Not a common password</li>
                     </ul>
-                    <p class="hint">Common passwords such as password123, qwerty123 and admin123 are not allowed. Type your password; copy and paste is turned off.</p>
+                    <p class="hint password-common-warning" role="alert" hidden>This password is too common. Please choose a different password.</p>
                 </div>
                 <div class="field">
                     <label for="confirm_password">Confirm new password</label>
