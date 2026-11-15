@@ -13,6 +13,8 @@ use App\Security\Secrets;
  * limited by the same two-factor lockout as authenticator codes, and sending is limited to
  * prevent e-mail flooding.
  */
+ // New Update as of November 12, 2026
+
 final class EmailCodes
 {
     public const TTL_SECONDS = 600;
